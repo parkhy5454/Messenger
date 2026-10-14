@@ -25,13 +25,17 @@
 4. 실행: `npm start` → http://localhost:3000
 5. SMTP를 설정하지 않았다면 인증 코드가 **서버 콘솔**에 출력됩니다.
 
-## Render에 배포
-1. 이 프로젝트를 GitHub 저장소(예: `messenger-app`)에 올립니다. `node_modules`는 제외됩니다.
-2. Render → **New + → Blueprint** → 저장소 선택 → `render.yaml`로 웹 서비스와 DB가 만들어집니다.
-3. 환경 변수 입력:
+## Render에 배포 (DB는 Neon)
+1. **Neon에서 DB 만들기**: https://neon.tech 에서 프로젝트를 만들고 **Connection string**을 복사합니다. `sslmode=require`가 포함된 주소입니다.
+2. 이 프로젝트를 GitHub 저장소(예: `messenger-app`)에 올립니다. `node_modules`는 제외됩니다.
+3. Render → **New + → Blueprint** → 저장소 선택 → `render.yaml`로 웹 서비스가 만들어집니다.
+4. 환경 변수 입력:
+   - `DATABASE_URL`: 1번에서 복사한 Neon 주소
    - `SMTP_USER`, `SMTP_PASS`(Gmail 앱 비밀번호), `SMTP_FROM`
    - `KAKAO_REST_KEY`, `KAKAO_REDIRECT_URI` (카카오를 쓸 때만)
-4. `JWT_SECRET`은 자동으로 생성됩니다.
+   - `PGSSL`은 `true`로 이미 설정되어 있습니다.
+5. `JWT_SECRET`은 자동으로 생성됩니다.
+6. 처음 실행할 때 테이블이 자동으로 만들어집니다.
 
 ## 카카오 로그인 설정
 1. https://developers.kakao.com 에서 앱을 만듭니다.
@@ -48,5 +52,5 @@
 - 실서비스 전에는 보안 점검(속도 제한, 입력 검증, 의존성 취약점 점검)을 받으세요.
 
 ## 무료 플랜 주의
-- Render 무료 PostgreSQL은 생성 후 30일이 지나면 만료됩니다.
+- Neon 무료 플랜은 연결 수와 저장 용량에 제한이 있고, 오랫동안 쓰지 않으면 DB가 잠들 수 있습니다. 한도는 Neon 요금 페이지에서 확인하세요.
 - 무료 웹 서비스는 접속이 없으면 잠들었다 깨어나므로 첫 접속이 느릴 수 있습니다.
