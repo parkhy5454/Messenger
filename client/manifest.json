@@ -1,0 +1,8 @@
+{
+  "name": "메신저",
+  "short_name": "메신저",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f5f9",
+  "theme_color": "#2f6fed"
+}

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#2f6fed" />
+  <title>메신저</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- 로그인 / 회원가입 -->
+  <section id="view-auth" class="view">
+    <div class="card">
+      <h1>메신저</h1>
+      <div class="tabs">
+        <button id="tab-login" class="tab active" type="button">로그인</button>
+        <button id="tab-signup" class="tab" type="button">회원가입</button>
+      </div>
+
+      <form id="login-form">
+        <input id="li-user" placeholder="아이디" autocomplete="username" required />
+        <input id="li-pass" type="password" placeholder="비밀번호" autocomplete="current-password" required />
+        <button type="submit" class="primary">로그인</button>
+      </form>
+
+      <form id="signup-form" hidden>
+        <input id="su-user" placeholder="아이디 (영소문자·숫자·_ 3~20자)" required />
+        <input id="su-name" placeholder="이름" required />
+        <input id="su-email" type="email" placeholder="이메일" required />
+        <input id="su-pass" type="password" placeholder="비밀번호 (8자 이상)" autocomplete="new-password" required />
+        <button type="submit" class="primary">가입하고 인증 코드 받기</button>
+      </form>
+
+      <div class="divider"><span>또는</span></div>
+      <a class="kakao" href="/api/auth/kakao">카카오로 계속하기</a>
+      <p id="auth-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 이메일 인증 -->
+  <section id="view-verify" class="view" hidden>
+    <div class="card">
+      <h1>이메일 인증</h1>
+      <p class="muted">메일로 받은 6자리 숫자 코드를 입력하세요.</p>
+      <form id="verify-form">
+        <input id="vf-code" inputmode="numeric" maxlength="6" placeholder="인증 코드" required />
+        <button type="submit" class="primary">인증 완료</button>
+      </form>
+      <p id="verify-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 메인: 친구 목록 + 채팅 -->
+  <section id="view-main" class="view main" hidden>
+    <aside class="side">
+      <header>
+        <strong id="me"></strong>
+        <button id="logout" class="ghost" type="button">로그아웃</button>
+      </header>
+      <form id="add-form" class="add">
+        <input id="add-input" placeholder="친구 아이디 추가" required />
+        <button type="submit">추가</button>
+      </form>
+      <ul id="friends" class="friends"></ul>
+    </aside>
+
+    <main class="chat">
+      <header>
+        <strong id="chat-title">친구를 선택하세요</strong>
+        <div id="chat-actions" hidden>
+          <button id="btn-block" class="ghost" type="button">차단</button>
+          <button id="btn-report" class="ghost" type="button">신고</button>
+        </div>
+      </header>
+      <div id="chat-box" class="box"></div>
+      <form id="compose" hidden>
+        <input id="msg-input" placeholder="메시지 입력" maxlength="2000" autocomplete="off" />
+        <button type="submit" class="primary">보내기</button>
+      </form>
+    </main>
+  </section>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
