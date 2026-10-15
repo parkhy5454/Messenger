@@ -740,6 +740,68 @@ function onDeleted(d) {
   renderChat('keep');
 }
 
+// ---------- 자동 삭제 / 한 번만 보기 ----------
+function openSheet(items) {
+  const box = $('#msg-menu-box');
+  box.innerHTML = '';
+  for (const item of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost wide-btn';
+    b.textContent = item[0];
+    b.onclick = () => { closeMsgMenu(); item[1](); };
+    box.appendChild(b);
+  }
+  $('#msg-menu').hidden = false;
+}
+
+const TTL_LABELS = { 0: '끄기', 60: '1분', 3600: '1시간', 86400: '1일', 604800: '1주일' };
+$('#btn-ttl').onclick = () => {
+  if (!current || current.type !== 'dm') return;
+  openSheet(Object.keys(TTL_LABELS).map((sec) => ['자동 삭제: ' + TTL_LABELS[sec], () => setTtl(Number(sec))]));
+};
+async function setTtl(sec) {
+  try {
+    await api('/api/prefs/ttl/' + current.id, { method: 'POST', body: JSON.stringify({ ttl: sec }) });
+    alert('자동 삭제: ' + TTL_LABELS[sec] + ' (이 대화의 새 메시지부터 적용됩니다)');
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// 한 번만 보기: 사진을 전체 화면으로 한 번 보여 주고, 닫으면 서버에서 사진을 지웁니다
+async function openViewOnce(m) {
+  try {
+    const url = await fileUrl(m);
+    const ov = document.createElement('div');
+    ov.className = 'viewer';
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    ov.appendChild(img);
+    ov.onclick = () => { ov.remove(); markViewed(m); };
+    document.body.appendChild(ov);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+async function markViewed(m) {
+  await api('/api/messages/' + m.id + '/view', { method: 'POST' }).catch(() => {});
+  const old = chatMsgs.find((x) => x.id === m.id);
+  if (old) {
+    old.viewed_at = new Date().toISOString();
+    old.file_id = null;
+    renderChat('keep');
+  }
+}
+function onViewed(v) {
+  const old = chatMsgs.find((x) => x.id === v.id);
+  if (!old) return;
+  old.viewed_at = new Date().toISOString();
+  old.file_id = null;
+  renderChat('keep');
+}
+
 // ---------- 시작 / 소켓 ----------
 async function start() {
   try {
@@ -784,6 +846,7 @@ function connectSocket() {
   socket.on('device:request', (r) => approveDevice(r).catch((err) => alert(err.message)));
   socket.on('message:updated', onUpdated);
   socket.on('message:deleted', onDeleted);
+  socket.on('message:viewed', onViewed);
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
@@ -1048,7 +1111,19 @@ function makeMsg(m, cont) {
   const bubble = document.createElement('div');
   bubble.className = 'msg ' + (mine ? 'me' : 'them');
   bubble.onclick = () => openMsgMenu(m);
-  if (m.kind === 'image' && m.file_id) {
+  if (m.view_once && !m.viewed_at && m.file_id) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost';
+    b.textContent = mine ? '한 번만 보기 (상대가 열면 사라짐)' : '한 번만 보기 · 눌러서 열기';
+    b.onclick = (e) => { e.stopPropagation(); if (!mine) openViewOnce(m); };
+    bubble.appendChild(b);
+  } else if (m.view_once) {
+    const d = document.createElement('div');
+    d.className = 'muted';
+    d.textContent = '열람한 사진';
+    bubble.appendChild(d);
+  } else if (m.kind === 'image' && m.file_id) {
     const img = document.createElement('img');
     img.className = 'thumb';
     img.alt = '사진';
@@ -1117,7 +1192,7 @@ async function sendPayload(extra) {
     const sk = extra.sk || await sendKey();
     if (!sk) return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null, replyTo: extra.replyTo || null });
     const body = await E2EE.seal(sk.key, { t: extra.text || '', f: extra.fileMeta || null });
-    const payload = { text: body, fileId: extra.fileId || null, enc: true, replyTo: extra.replyTo || null };
+    const payload = { text: body, fileId: extra.fileId || null, enc: true, replyTo: extra.replyTo || null, viewOnce: !!extra.viewOnce };
     if (current.type === 'group') Object.assign(payload, { groupId: current.id, epoch: sk.epoch });
     else payload.to = current.id;
     emitSend(payload);
@@ -1144,6 +1219,7 @@ $('#attach').onchange = async (e) => {
   if (file.size > 20 * 1024 * 1024) return alert('20MB 이하 파일만 보낼 수 있습니다');
   try {
     let body = file, ctype = file.type || 'application/octet-stream', fname = file.name, fileMeta = null;
+    const viewOnce = current.type === 'dm' && (file.type || '').startsWith('image/') && confirm('한 번만 볼 수 있는 사진으로 보낼까요? 상대가 열면 사라집니다.');
     const sk = await sendKey();
     if (sk) {
       const sealed = await E2EE.sealBytes(sk.key, new Uint8Array(await file.arrayBuffer()));
@@ -1164,7 +1240,7 @@ $('#attach').onchange = async (e) => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || '파일 업로드에 실패했습니다');
     const text = $('#msg-input').value.trim();
-    await sendPayload({ fileId: j.id, text, fileMeta, sk, replyTo: replyTo ? replyTo.id : null });
+    await sendPayload({ fileId: j.id, text, fileMeta, sk, replyTo: replyTo ? replyTo.id : null, viewOnce });
     clearCompose();
     $('#msg-input').value = '';
   } catch (err) {

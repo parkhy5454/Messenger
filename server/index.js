@@ -423,6 +423,32 @@ app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
   res.send(r.data);
 }));
 
+// ---- 사라지는 메시지 설정 (1:1 대화, 양쪽 모두에 적용) ----
+app.post('/api/prefs/ttl/:id', auth, wrap(async (req, res) => {
+  const other = Number(req.params.id);
+  const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, other]);
+  if (!f.rows[0]) return res.status(404).json({ error: '친구와의 대화에서만 설정할 수 있습니다' });
+  const ttl = Math.max(0, Math.min(604800, Number((req.body || {}).ttl) || 0));
+  const a = Math.min(req.user.id, other), b = Math.max(req.user.id, other);
+  if (!ttl) await pool.query('DELETE FROM conv_ttl WHERE a=$1 AND b=$2', [a, b]);
+  else await pool.query('INSERT INTO conv_ttl (a, b, ttl) VALUES ($1,$2,$3) ON CONFLICT (a, b) DO UPDATE SET ttl = EXCLUDED.ttl', [a, b, ttl]);
+  res.json({ ok: true, ttl });
+}));
+
+// ---- 한 번만 보기: 받는 사람이 열면 사진 데이터를 지우고 양쪽에 알림 ----
+app.post('/api/messages/:id/view', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows } = await pool.query(
+    'SELECT sender_id, recipient_id, file_id FROM messages WHERE id=$1 AND recipient_id=$2 AND view_once=true AND viewed_at IS NULL AND deleted=false',
+    [id, req.user.id]);
+  const m = rows[0];
+  if (!m) return res.status(404).json({ error: '열 수 없는 메시지입니다' });
+  await pool.query('UPDATE messages SET viewed_at=now(), file_id=NULL WHERE id=$1', [id]);
+  if (m.file_id) await pool.query('DELETE FROM files WHERE id=$1', [m.file_id]);
+  io.to(['user:' + m.sender_id, 'user:' + m.recipient_id]).emit('message:viewed', { id });
+  res.json({ ok: true });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
@@ -581,10 +607,11 @@ app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const me = req.user.id;
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT id, sender_id, recipient_id, text, kind, file_id, (CASE WHEN COALESCE((SELECT receipts FROM chat_prefs WHERE user_id=messages.recipient_id AND target_id=messages.sender_id AND kind='dm'), (SELECT receipts_on FROM users WHERE id=messages.recipient_id), true) THEN messages.read_at END) AS read_at, created_at, enc, reply_to, edited_at, deleted,
+    `SELECT id, sender_id, recipient_id, text, kind, file_id, (CASE WHEN COALESCE((SELECT receipts FROM chat_prefs WHERE user_id=messages.recipient_id AND target_id=messages.sender_id AND kind='dm'), (SELECT receipts_on FROM users WHERE id=messages.recipient_id), true) THEN messages.read_at END) AS read_at, created_at, enc, reply_to, edited_at, deleted, view_once, viewed_at,
        (SELECT name FROM files WHERE id = messages.file_id) AS file_name
      FROM messages
      WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
+       AND (expires_at IS NULL OR expires_at > now())
      ORDER BY id DESC LIMIT 50`,
     [me, other, before]
   );
@@ -917,11 +944,15 @@ io.on('connection', (socket) => {
       );
       if (!f.rows[0]) return reply({ error: '친구에게만 메시지를 보낼 수 있습니다' });
 
+      // 자동 삭제 설정과 한 번만 보기 (사진 전송에만 적용)
+      const ttlRow = await pool.query('SELECT ttl FROM conv_ttl WHERE a=$1 AND b=$2', [Math.min(me, to), Math.max(me, to)]);
+      const expiresAt = ttlRow.rows[0] ? new Date(Date.now() + ttlRow.rows[0].ttl * 1000) : null;
+      const viewOnce = !!p.viewOnce && !!fileId;
       const { rows } = await pool.query(
-        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc, reply_to) VALUES ($1,$2,$3,$4,$5,$6,$7)
-         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to,
+        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc, reply_to, expires_at, view_once) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to, view_once,
            (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
-        [me, to, text, kind, fileId, enc, replyTo]
+        [me, to, text, kind, fileId, enc, replyTo, expiresAt, viewOnce]
       );
       io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
       // 1:1 푸시 알림
@@ -1101,3 +1132,15 @@ init()
     console.error('DB 초기화 실패', e);
     process.exit(1);
   });
+
+// ---- 자동 삭제: 만료된 1:1 메시지를 지우고 양쪽 화면에 알립니다 (30초마다 확인) ----
+async function purgeExpired() {
+  const { rows } = await pool.query(
+    'SELECT id, sender_id, recipient_id, file_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= now() AND deleted=false LIMIT 500');
+  for (const r of rows) {
+    await pool.query("UPDATE messages SET deleted=true, text='', file_id=NULL, edited_at=NULL, expires_at=NULL WHERE id=$1", [r.id]);
+    if (r.file_id) await pool.query('DELETE FROM files WHERE id=$1', [r.file_id]).catch(() => {});
+    io.to(['user:' + r.sender_id, 'user:' + r.recipient_id]).emit('message:deleted', { id: r.id });
+  }
+}
+setInterval(() => purgeExpired().catch((e) => console.error('자동 삭제 오류:', e)), 30000);
