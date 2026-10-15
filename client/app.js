@@ -2630,6 +2630,19 @@ async function resizeImage(file) {
   return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9));
 }
 $('#btn-avatar').onclick = () => $('#avatar-input').click();
+$('#btn-avatar-del').onclick = async () => {
+  if (!confirm('프로필 사진을 지울까요?')) return;
+  try {
+    await api('/api/me/avatar', { method: 'DELETE' });
+    avatarCache.delete(me.id);
+    me.has_photo = false;
+    renderMe();
+    await loadList();
+    alert('프로필 사진을 지웠습니다.');
+  } catch (err) {
+    alert(err.message);
+  }
+};
 $('#avatar-input').onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = '';

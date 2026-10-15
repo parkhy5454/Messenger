@@ -1287,6 +1287,14 @@ app.post('/api/me/avatar', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// 내 프로필 사진 지우기 (기본 사진 없음으로 돌아갑니다)
+app.delete('/api/me/avatar', auth, wrap(async (req, res) => {
+  const prev = await pool.query('SELECT avatar_file_id FROM users WHERE id=$1', [req.user.id]);
+  await pool.query('UPDATE users SET avatar_file_id=NULL WHERE id=$1', [req.user.id]);
+  if (prev.rows[0] && prev.rows[0].avatar_file_id) await deleteOrphanFile(prev.rows[0].avatar_file_id);
+  res.json({ ok: true });
+}));
+
 // 사진 보기: 본인, 또는 수락된 친구이면서 상대가 사진 공개를 켠 경우만
 app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
   const id = Number(req.params.id);
