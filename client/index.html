@@ -276,8 +276,10 @@
           <button id="btn-glink" class="ghost" type="button">초대 링크</button>
           <button id="btn-gadd" class="ghost" type="button">초대</button>
           <button id="btn-gleave" class="ghost" type="button">나가기</button>
+          <button id="btn-call" class="ghost" type="button">통화</button>
         </div>
       </header>
+      <div id="call-banner" hidden><span id="call-banner-text"></span><button id="call-join" class="primary" type="button">참여</button></div>
       <button id="more" class="link" type="button" hidden>이전 메시지 더 보기</button>
       <div id="chat-box" class="box"></div>
       <div id="compose-bar" hidden><span id="compose-bar-text"></span><button id="compose-bar-x" class="ghost" type="button">×</button></div>
@@ -287,6 +289,15 @@
         <button id="btn-schedule" class="ghost" type="button">예약</button>
         <button type="submit" class="primary">보내기</button>
       </form>
+    </section>
+
+    <section id="call-view" hidden>
+      <div id="call-grid"></div>
+      <div id="call-controls">
+        <button id="call-mic" class="ghost" type="button">마이크 끄기</button>
+        <button id="call-cam" class="ghost" type="button">카메라 끄기</button>
+        <button id="call-end" type="button">나가기</button>
+      </div>
     </section>
 
     <div id="msg-menu" hidden><div id="msg-menu-sheet"><div id="msg-menu-box"></div><button id="msg-menu-cancel" class="ghost wide-btn" type="button">취소</button></div></div>

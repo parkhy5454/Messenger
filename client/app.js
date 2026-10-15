@@ -1163,6 +1163,17 @@ function connectSocket() {
   socket.on('message:deleted', onDeleted);
   socket.on('message:viewed', onViewed);
   socket.on('reaction:updated', onReaction);
+  socket.on('call:signal', onCallSignal);
+  socket.on('call:peer-joined', ({ groupId, sid, name }) => {
+    if (callState && callState.groupId === groupId) callState.names.set(sid, name);
+  });
+  socket.on('call:peer-left', ({ groupId, sid }) => {
+    if (callState && callState.groupId === groupId) removeCallPeer(sid);
+  });
+  socket.on('call:state', ({ groupId, count }) => {
+    callCounts.set(groupId, count);
+    renderCallBanner();
+  });
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
@@ -1331,6 +1342,13 @@ async function openChat(t) {
   $('#dm-actions').hidden = t.type !== 'dm';
   if (t.type === 'dm') refreshReceiptBtn();
   $('#group-actions').hidden = t.type !== 'group';
+  $('#call-banner').hidden = true;
+  if (t.type === 'group') socket.emit('call:status', { groupId: t.id }, (r) => {
+    if (r && !r.error) {
+      callCounts.set(t.id, r.count);
+      renderCallBanner();
+    }
+  });
   $('#compose').hidden = false;
   $('#chat-box').innerHTML = '';
   if (t.type === 'group') await syncGroupKeys(t.id).catch(() => {});
@@ -1817,3 +1835,175 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 
 if (token) start();
 else showView('auth');
+
+// ===== 그룹 통화 (메쉬 WebRTC, 무료 STUN 사용) =====
+const RTC_CFG = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
+const callCounts = new Map(); // groupId -> 현재 참여자 수
+let callState = null; // { groupId, stream, peers: Map(sid -> { pc, pending }), names: Map(sid -> 이름) }
+
+function renderCallBanner() {
+  const gid = current && current.type === 'group' ? current.id : null;
+  const n = gid ? callCounts.get(gid) || 0 : 0;
+  const inThis = !!callState && callState.groupId === gid;
+  $('#call-banner-text').textContent = `통화 중 · ${n}명 참여`;
+  $('#call-banner').hidden = !(n > 0 && !inThis);
+}
+
+function getCallMedia() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return Promise.reject(new Error('이 브라우저는 통화를 지원하지 않습니다'));
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: true, video: { width: 640, height: 480 } }).catch(() =>
+    navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {
+      throw new Error('마이크 권한이 필요합니다');
+    })
+  );
+}
+
+async function joinCall(gid) {
+  if (callState) {
+    if (callState.groupId === gid) return;
+    return alert('다른 통화에 참여 중입니다');
+  }
+  let stream;
+  try {
+    stream = await getCallMedia();
+  } catch (e) {
+    return alert(e.message);
+  }
+  callState = { groupId: gid, stream, peers: new Map(), names: new Map() };
+  $('#call-view').hidden = false;
+  addCallTile('me', stream, '나', true);
+  renderCallBanner();
+  socket.emit('call:join', { groupId: gid }, async (res) => {
+    if (!callState || callState.groupId !== gid) return;
+    if (!res || res.error) {
+      alert((res && res.error) || '통화에 참여하지 못했습니다');
+      return leaveCall();
+    }
+    // 기존 참여자 각각에게 offer를 보냄 (새로 들어온 사람이 연결을 시작)
+    for (const p of res.peers) {
+      if (!callState || callState.groupId !== gid) return;
+      callState.names.set(p.sid, p.name);
+      await offerTo(p.sid, makePeer(p.sid));
+    }
+  });
+}
+
+function sendSignal(sid, data) {
+  if (callState) socket.emit('call:signal', { groupId: callState.groupId, to: sid, data });
+}
+
+function makePeer(sid) {
+  if (callState.peers.has(sid)) return callState.peers.get(sid);
+  const pc = new RTCPeerConnection(RTC_CFG);
+  const entry = { pc, pending: [] };
+  callState.peers.set(sid, entry);
+  callState.stream.getTracks().forEach((t) => pc.addTrack(t, callState.stream));
+  pc.onicecandidate = (e) => {
+    if (e.candidate) sendSignal(sid, { candidate: e.candidate });
+  };
+  pc.ontrack = (e) => addCallTile(sid, e.streams[0], callState.names.get(sid) || '참여자', false);
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') removeCallPeer(sid);
+  };
+  return entry;
+}
+
+async function offerTo(sid, entry) {
+  const offer = await entry.pc.createOffer();
+  await entry.pc.setLocalDescription(offer);
+  sendSignal(sid, { sdp: entry.pc.localDescription });
+}
+
+async function onCallSignal({ groupId, from, data }) {
+  if (!callState || callState.groupId !== groupId || !data) return;
+  try {
+    let entry = callState.peers.get(from);
+    if (data.sdp) {
+      if (!entry) {
+        if (data.sdp.type !== 'offer') return;
+        entry = makePeer(from);
+      }
+      await entry.pc.setRemoteDescription(data.sdp);
+      for (const c of entry.pending.splice(0)) await entry.pc.addIceCandidate(c).catch(() => {});
+      if (data.sdp.type === 'offer') {
+        await entry.pc.setLocalDescription(await entry.pc.createAnswer());
+        sendSignal(from, { sdp: entry.pc.localDescription });
+      }
+    } else if (data.candidate) {
+      if (!entry) return;
+      if (entry.pc.remoteDescription) await entry.pc.addIceCandidate(data.candidate).catch(() => {});
+      else entry.pending.push(data.candidate);
+    }
+  } catch (e) {
+    console.warn('call signal failed', e);
+  }
+}
+
+function addCallTile(id, stream, name, mine) {
+  const grid = $('#call-grid');
+  let tile = grid.querySelector(`[data-sid="${id}"]`);
+  if (!tile) {
+    tile = document.createElement('div');
+    tile.className = 'call-tile';
+    tile.dataset.sid = id;
+    const v = document.createElement('video');
+    v.autoplay = true;
+    v.playsInline = true;
+    if (mine) v.muted = true;
+    const label = document.createElement('span');
+    label.className = 'call-tile-name';
+    tile.append(v, label);
+    grid.append(tile);
+  }
+  const v = tile.querySelector('video');
+  if (v.srcObject !== stream) v.srcObject = stream;
+  tile.querySelector('.call-tile-name').textContent = name;
+}
+
+function removeCallPeer(sid) {
+  if (!callState) return;
+  const entry = callState.peers.get(sid);
+  if (entry) {
+    entry.pc.close();
+    callState.peers.delete(sid);
+  }
+  callState.names.delete(sid);
+  const tile = $('#call-grid').querySelector(`[data-sid="${sid}"]`);
+  if (tile) tile.remove();
+}
+
+function leaveCall() {
+  if (!callState) return;
+  const gid = callState.groupId;
+  for (const sid of [...callState.peers.keys()]) removeCallPeer(sid);
+  callState.stream.getTracks().forEach((t) => t.stop());
+  $('#call-grid').innerHTML = '';
+  if (socket) socket.emit('call:leave', { groupId: gid });
+  callState = null;
+  $('#call-mic').textContent = '마이크 끄기';
+  $('#call-cam').textContent = '카메라 끄기';
+  $('#call-view').hidden = true;
+  renderCallBanner();
+}
+
+$('#btn-call').onclick = () => {
+  if (current && current.type === 'group') joinCall(current.id);
+};
+$('#call-join').onclick = () => {
+  if (current && current.type === 'group') joinCall(current.id);
+};
+$('#call-end').onclick = () => leaveCall();
+$('#call-mic').onclick = () => {
+  const t = callState && callState.stream.getAudioTracks()[0];
+  if (!t) return;
+  t.enabled = !t.enabled;
+  $('#call-mic').textContent = t.enabled ? '마이크 끄기' : '마이크 켜기';
+};
+$('#call-cam').onclick = () => {
+  const t = callState && callState.stream.getVideoTracks()[0];
+  if (!t) return;
+  t.enabled = !t.enabled;
+  $('#call-cam').textContent = t.enabled ? '카메라 끄기' : '카메라 켜기';
+};

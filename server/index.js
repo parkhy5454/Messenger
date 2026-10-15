@@ -1066,6 +1066,19 @@ io.use(async (socket, next) => {
   next();
 });
 
+// ===== 그룹 통화 상태 (메모리): groupId -> Map(socketId -> { userId, name }) =====
+const calls = new Map();
+const CALL_MAX = 6; // 메쉬 방식은 참여자 수가 늘수록 연결 수가 제곱으로 늘어나므로 상한을 둠
+function callCount(gid) {
+  const r = calls.get(gid);
+  return r ? r.size : 0;
+}
+async function broadcastCall(gid) {
+  const count = callCount(gid);
+  const { rows } = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [gid]);
+  for (const r of rows) io.to('user:' + r.user_id).emit('call:state', { groupId: gid, count });
+}
+
 io.on('connection', (socket) => {
   const me = socket.user.id;
   socket.join('user:' + me);
@@ -1073,6 +1086,53 @@ io.on('connection', (socket) => {
     // 마지막 접속 시각: 이 사용자의 연결이 모두 끊겼을 때만 기록
     const room = io.sockets.adapter.rooms.get('user:' + me);
     if (!room || room.size === 0) pool.query('UPDATE users SET last_seen=now() WHERE id=$1', [me]).catch(() => {});
+  });
+
+  // ----- 그룹 통화 시그널링: 서버는 SDP/ICE를 중계만 하고 미디어는 참여자끼리 직접 주고받음 -----
+  socket.data.calls = new Set();
+  const leaveCall = (gid) => {
+    const room = calls.get(gid);
+    if (!room || !room.delete(socket.id)) return;
+    if (room.size === 0) calls.delete(gid);
+    for (const sid of room.keys()) io.to(sid).emit('call:peer-left', { groupId: gid, sid: socket.id });
+    socket.data.calls.delete(gid);
+    broadcastCall(gid).catch(() => {});
+  };
+  socket.on('call:status', async ({ groupId } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const gid = Number(groupId);
+    if (!(await isGroupMember(gid, me))) return reply({ error: '그룹 멤버가 아닙니다' });
+    reply({ count: callCount(gid) });
+  });
+  socket.on('call:join', async ({ groupId } = {}, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const gid = Number(groupId);
+    if (!(await isGroupMember(gid, me))) return reply({ error: '그룹 멤버가 아닙니다' });
+    const { rows } = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
+    const name = (rows[0] && rows[0].name) || '참여자';
+    if (!calls.has(gid)) calls.set(gid, new Map());
+    const room = calls.get(gid);
+    if (room.has(socket.id)) return reply({ error: '이미 참여 중입니다' });
+    if ([...room.values()].some((p) => p.userId === me)) return reply({ error: '다른 기기에서 이미 통화 중입니다' });
+    if (room.size >= CALL_MAX) return reply({ error: `통화는 최대 ${CALL_MAX}명까지 가능합니다` });
+    const peers = [...room].map(([sid, p]) => ({ sid, name: p.name }));
+    room.set(socket.id, { userId: me, name });
+    socket.data.calls.add(gid);
+    for (const sid of room.keys()) {
+      if (sid !== socket.id) io.to(sid).emit('call:peer-joined', { groupId: gid, sid: socket.id, name });
+    }
+    broadcastCall(gid).catch(() => {});
+    reply({ peers });
+  });
+  socket.on('call:signal', ({ groupId, to, data } = {}) => {
+    const gid = Number(groupId);
+    const room = calls.get(gid);
+    if (!room || !data || !room.has(socket.id) || !room.has(to)) return;
+    io.to(to).emit('call:signal', { groupId: gid, from: socket.id, data });
+  });
+  socket.on('call:leave', ({ groupId } = {}) => leaveCall(Number(groupId)));
+  socket.on('disconnect', () => {
+    for (const gid of [...socket.data.calls]) leaveCall(gid);
   });
 
   // 메시지 전송: { to, text, fileId } (1:1) 또는 { groupId, text, fileId } (그룹)
