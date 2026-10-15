@@ -137,3 +137,13 @@ CREATE TABLE IF NOT EXISTS device_requests (
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to INT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false;
+
+-- 읽음 표시 설정: 전체(users.receipts_on)와 대화별(chat_prefs)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS receipts_on BOOLEAN NOT NULL DEFAULT true;
+CREATE TABLE IF NOT EXISTS chat_prefs (
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_id INT NOT NULL,
+  kind TEXT NOT NULL,
+  receipts BOOLEAN NOT NULL,
+  PRIMARY KEY (user_id, target_id, kind)
+);

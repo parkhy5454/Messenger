@@ -266,7 +266,7 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
@@ -359,6 +359,27 @@ app.post('/api/devices/request/:id/approve', auth, wrap(async (req, res) => {
 app.post('/api/devices/request/:id/deny', auth, wrap(async (req, res) => {
   await pool.query("UPDATE device_requests SET status='denied' WHERE id=$1 AND user_id=$2 AND status='pending'",
     [Number(req.params.id), req.user.id]);
+  res.json({ ok: true });
+}));
+
+// ---- 읽음 표시 설정 ----
+app.get('/api/prefs/dm/:id', auth, wrap(async (req, res) => {
+  const r = await pool.query(
+    "SELECT receipts FROM chat_prefs WHERE user_id=$1 AND target_id=$2 AND kind='dm'", [req.user.id, Number(req.params.id)]);
+  const g = await pool.query('SELECT receipts_on FROM users WHERE id=$1', [req.user.id]);
+  res.json({ receipts: r.rows[0] ? r.rows[0].receipts : (g.rows[0] ? g.rows[0].receipts_on : true) });
+}));
+
+app.post('/api/prefs/dm/:id', auth, wrap(async (req, res) => {
+  await pool.query(
+    "INSERT INTO chat_prefs (user_id, target_id, kind, receipts) VALUES ($1,$2,'dm',$3) " +
+    'ON CONFLICT (user_id, target_id, kind) DO UPDATE SET receipts = EXCLUDED.receipts',
+    [req.user.id, Number(req.params.id), !!(req.body || {}).receipts]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/prefs/receipts', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE users SET receipts_on=$2 WHERE id=$1', [req.user.id, !!(req.body || {}).receiptsOn]);
   res.json({ ok: true });
 }));
 
@@ -512,7 +533,7 @@ app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const me = req.user.id;
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to, edited_at, deleted,
+    `SELECT id, sender_id, recipient_id, text, kind, file_id, (CASE WHEN COALESCE((SELECT receipts FROM chat_prefs WHERE user_id=messages.recipient_id AND target_id=messages.sender_id AND kind='dm'), (SELECT receipts_on FROM users WHERE id=messages.recipient_id), true) THEN messages.read_at END) AS read_at, created_at, enc, reply_to, edited_at, deleted,
        (SELECT name FROM files WHERE id = messages.file_id) AS file_name
      FROM messages
      WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
@@ -928,7 +949,9 @@ io.on('connection', (socket) => {
          RETURNING id, read_at`,
         [other, me]
       );
-      if (rows.length) io.to('user:' + other).emit('read:dm', { by: me, ids: rows.map((r) => r.id) });
+      // 읽음 표시 설정이 꺼져 있으면 상대에게 알리지 않습니다 (읽음 기록은 내 안 읽음 수를 위해 남김)
+      const rcpt = rows.length ? (await pool.query("SELECT COALESCE((SELECT receipts FROM chat_prefs WHERE user_id=$1 AND target_id=$2 AND kind='dm'), (SELECT receipts_on FROM users WHERE id=$1), true) AS rc", [me, other])).rows[0].rc : false;
+      if (rcpt) io.to('user:' + other).emit('read:dm', { by: me, ids: rows.map((r) => r.id) });
     } catch (e) {
       console.error(e);
     }

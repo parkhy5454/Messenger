@@ -740,6 +740,7 @@ async function enterMain() {
   openMain('friends');
   renderMe();
   $('#btn-admin').hidden = !me.is_admin;
+  renderReceiptsBtn();
   await loadRequests();
   await loadList();
   connectSocket();
@@ -919,6 +920,7 @@ async function openChat(t) {
   setChatOpen(true);
   $('#chat-title').textContent = t.name;
   $('#dm-actions').hidden = t.type !== 'dm';
+  if (t.type === 'dm') refreshReceiptBtn();
   $('#group-actions').hidden = t.type !== 'group';
   $('#compose').hidden = false;
   $('#chat-box').innerHTML = '';
@@ -1172,6 +1174,38 @@ function onRead({ by, ids }) {
     if (r) r.textContent = '';
   }
 }
+
+// 대화별 읽음 표시 on/off (상대 화면에서 내 읽음 표시가 보이는지)
+async function refreshReceiptBtn() {
+  const r = await api('/api/prefs/dm/' + current.id).catch(() => null);
+  $('#btn-receipt').dataset.on = r ? String(r.receipts) : '';
+  if (r) $('#btn-receipt').textContent = r.receipts ? '읽음 끄기' : '읽음 켜기';
+}
+$('#btn-receipt').onclick = async () => {
+  if (!current || current.type !== 'dm') return;
+  const on = $('#btn-receipt').dataset.on === 'true';
+  try {
+    await api('/api/prefs/dm/' + current.id, { method: 'POST', body: JSON.stringify({ receipts: !on }) });
+    await refreshReceiptBtn();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+// 전체 읽음 표시 on/off (설정 탭)
+function renderReceiptsBtn() {
+  $('#btn-receipts').textContent = '읽음 표시 보내기: ' + (me.receipts_on ? '켜짐' : '꺼짐');
+}
+$('#btn-receipts').onclick = async () => {
+  const next = !me.receipts_on;
+  try {
+    await api('/api/prefs/receipts', { method: 'POST', body: JSON.stringify({ receiptsOn: next }) });
+    me.receipts_on = next;
+    renderReceiptsBtn();
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
 $('#btn-block').onclick = async () => {
   if (!current || !confirm(current.name + '님을 차단할까요?')) return;
