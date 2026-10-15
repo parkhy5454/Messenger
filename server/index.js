@@ -20,6 +20,31 @@ if (!JWT_SECRET) {
 const app = express();
 app.set('trust proxy', 1); // Render 프록시 뒤에서 실제 사용자 IP를 읽기 위함
 app.use(express.json({ limit: '100kb' }));
+// 보안 헤더: 스크립트는 같은 출처와 토스 결제 스크립트만 허용 (인라인 스크립트 금지)
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': [
+      "default-src 'self'",
+      "script-src 'self' https://js.tosspayments.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "media-src 'self' blob:",
+      "font-src 'self' data:",
+      "connect-src 'self' https://js.tosspayments.com",
+      "frame-src https://js.tosspayments.com https://*.tosspayments.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; '),
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()',
+    'Strict-Transport-Security': 'max-age=15552000',
+  });
+  next();
+});
 app.use(express.static(path.join(__dirname, '..', 'client')));
 
 // 메일 발송: SMTP_HOST가 없으면 인증 코드를 서버 로그에만 출력합니다 (개발용).
