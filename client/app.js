@@ -779,17 +779,25 @@ function deleteMsg(m) {
   });
 }
 
-// 전달: 텍스트 메시지만 (파일은 제외). 대화 목록에 있는 친구 아이디나 그룹 이름으로 찾습니다
+// 전달: 텍스트 메시지만 (파일은 제외). 최근 대화 순서로 대화를 골라 보냅니다 (현재 대화는 제외)
 async function forwardMsg(m) {
   if (m.file_id) return alert('파일은 전달할 수 없습니다. 텍스트 메시지만 전달할 수 있습니다.');
-  const q = (prompt('전달할 친구 아이디 또는 그룹 이름을 입력하세요') || '').trim();
-  if (!q) return;
-  const target = chats.find((c) => (c.type === 'group' ? c.name === q : c.username === q.toLowerCase()));
-  if (!target) return alert('대화 목록에서 찾을 수 없습니다. 친구나 그룹 대화가 있어야 전달할 수 있습니다.');
+  const targets = chats
+    .filter((c) => !(current && c.type === current.type && c.id === current.id))
+    .sort((a, b) => (b.last ? Date.parse(b.last.created_at) : 0) - (a.last ? Date.parse(a.last.created_at) : 0))
+    .slice(0, 50);
+  if (!targets.length) return alert('전달할 대화가 없습니다. 친구나 그룹 대화가 있어야 합니다.');
+  openSheet([['📨 전달할 대화를 고르세요', () => {}]].concat(
+    targets.map((c) => [(c.type === 'group' ? '👥 ' : '') + c.name, () => forwardTo(m, c)])
+  ));
+}
+async function forwardTo(m, target) {
   const prev = current;
   current = target;
   try {
     await sendPayload({ text: m.text || '' });
+  } catch (err) {
+    alert(err.message);
   } finally {
     current = prev;
   }

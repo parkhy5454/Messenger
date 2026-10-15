@@ -321,6 +321,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .consent-box { max-width: 360px; width: 100%; padding: 20px; border-radius: 12px; background: Canvas; color: CanvasText; }
 .consent-box button { width: 100%; margin-top: 8px; }
 .withdraw-row { color: #e5484d; }
+#msg-menu-box { max-height: 60vh; overflow-y: auto; }
 .msg-search { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
 .msg-search[hidden] { display: none; }
 .msg-search input { flex: 1; min-width: 0; }
