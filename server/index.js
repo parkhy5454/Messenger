@@ -285,7 +285,6 @@ app.patch('/api/me', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-x
 // ---- E2EE (1:1 종단간 암호화) 공개키 / 감싼 개인키 ----
 app.get('/api/e2ee/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT pubkey, enc_privkey FROM users WHERE id=$1', [req.user.id]);
