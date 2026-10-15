@@ -1,6 +1,7 @@
 const $ = (s) => document.querySelector(s);
 let token = localStorage.getItem('token');
 let me = null, socket = null, current = null, oldestId = null, chatMsgs = [];
+let chatFilter = 'all'; // 대화 목록 필터: all | dm | group
 let pendingEmail = '', resetEmail = '';
 let friends = [], chats = [];
 let pendingPassword = null;
@@ -2018,6 +2019,7 @@ function renderList() {
   const ul = $('#list');
   ul.innerHTML = '';
   const items = chats
+    .filter((c) => chatFilter === 'all' || (chatFilter === 'group' ? c.type === 'group' : c.type !== 'group'))
     .filter((c) => !q || c.name.toLowerCase().includes(q))
     .sort((a, b) => {
       const pa = pinnedKeys.has(a.type + ':' + a.id) ? 1 : 0;
@@ -2036,12 +2038,26 @@ function renderList() {
   }
 
   // 하단 탭의 "대화" 뱃지: 안 읽은 1:1 메시지 총합
+  // 필터 칸마다 안 읽은 수 표시
+  const unreadOf = (f) => chats.filter((c) => f === 'all' || (f === 'group' ? c.type === 'group' : c.type !== 'group'))
+    .reduce((sum, c) => sum + (c.unread || 0), 0);
+  for (const b of document.querySelectorAll('#chat-filter button')) {
+    const n = unreadOf(b.dataset.f);
+    b.querySelector('.cf-n').textContent = n ? ' ' + (n > 99 ? '99+' : n) : '';
+  }
   const total = chats.reduce((sum, c) => sum + (c.unread || 0), 0);
   const badge = $('#chat-badge');
   badge.hidden = !total;
   badge.textContent = total > 99 ? '99+' : String(total);
 }
 $('#search').oninput = renderList;
+for (const b of document.querySelectorAll('#chat-filter button')) {
+  b.onclick = () => {
+    chatFilter = b.dataset.f;
+    for (const x of document.querySelectorAll('#chat-filter button')) x.classList.toggle('on', x === b);
+    renderList();
+  };
+}
 
 function chatItem(c) {
   const li = document.createElement('li');

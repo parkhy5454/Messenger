@@ -461,6 +461,11 @@
     <div id="tab-chats" class="pane" hidden>
       <header class="pane-head"><strong>대화</strong></header>
       <input id="search" class="search" placeholder="대화 검색" />
+      <div id="chat-filter" class="chat-filter" role="tablist">
+        <button type="button" data-f="all" class="on" role="tab">전체<span class="cf-n"></span></button>
+        <button type="button" data-f="dm" role="tab">개인<span class="cf-n"></span></button>
+        <button type="button" data-f="group" role="tab">그룹<span class="cf-n"></span></button>
+      </div>
       <ul id="list" class="friends"></ul>
     </div>
 

@@ -385,3 +385,10 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .policy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .policy-head button { width: auto; padding: 8px 14px; }
 #policy-frame { flex: 1; width: 100%; border: none; }
+
+/* 대화 목록 필터: 전체 / 개인 / 그룹 */
+.chat-filter { display: flex; gap: 6px; margin: 0 16px 8px; }
+.chat-filter button { flex: 1; border: 1px solid var(--line); background: var(--bg); color: var(--sub); border-radius: 18px; padding: 7px 0; font-size: 14px; }
+.chat-filter button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; }
+.cf-n { color: #e5484d; font-weight: 700; }
+.chat-filter button.on .cf-n { color: #ffd0d1; }
