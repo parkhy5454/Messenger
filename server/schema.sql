@@ -232,3 +232,6 @@ CREATE TABLE IF NOT EXISTS ai_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ai_messages_user ON ai_messages (user_id, id);
+
+-- 봇 계정 표시 (로그인 불가)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT false;

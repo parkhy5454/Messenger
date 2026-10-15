@@ -844,7 +844,7 @@ async function acceptFriend(requesterId, myId) {
 app.get('/api/friends', auth, wrap(async (req, res) => {
   // 친구가 나에게 지정한 프로필(없으면 기본 프로필)의 이름·상태·사진을 보여줌
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, COALESCE(pr.name, u.name) AS name, u.show_online, u.last_seen, u.show_photo,
+    `SELECT u.id, u.username, COALESCE(pr.name, u.name) AS name, u.is_bot, u.show_online, u.last_seen, u.show_photo,
        COALESCE(pr.avatar_file_id, u.avatar_file_id) AS avatar_file_id,
        (pr.avatar_file_id IS NOT NULL) AS profile_photo,
        (CASE WHEN u.show_status_msg THEN COALESCE(pr.status_msg, u.status_msg) ELSE NULL END) AS status_msg,
@@ -858,7 +858,7 @@ app.get('/api/friends', auth, wrap(async (req, res) => {
   );
   // 온라인 표시: 공개 설정이 켜져 있고 지금 접속 중일 때만
   res.json(rows.map((r) => ({
-    id: r.id, username: r.username, name: r.name, status_msg: r.status_msg, last_seen: r.last_seen,
+    id: r.id, username: r.username, name: r.name, status_msg: r.status_msg, last_seen: r.last_seen, is_bot: r.is_bot,
     has_photo: !!(r.avatar_file_id && (r.show_photo || r.profile_photo)),
     online: !!(r.show_online && io.sockets.adapter.rooms.get('user:' + r.id)),
   })));
@@ -1405,6 +1405,7 @@ io.on('connection', (socket) => {
         [me, to, text, kind, fileId, enc, replyTo, expiresAt, viewOnce]
       );
       io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
+      if (!enc && !fileId) botReply(to, me, text).catch(() => {});
       // 1:1 푸시 알림
       const sn = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
       notifyUsers([to], {
@@ -1590,10 +1591,140 @@ async function notifyUsers(userIds, payload, exceptUserId) {
   ));
 }
 
+// ---- 봇 (1단계: 내장 봇) ----
+// 봇은 로그인할 수 없는 계정(is_bot=true)이며, 사용자가 '추가'하면 친구가 되어 1:1 대화로 명령을 보냅니다.
+// 봇과의 대화는 종단간 암호화가 아닌 평문입니다 (봇이 복호화할 수 없기 때문).
+const BOT_LIST = [
+  { username: 'bot_time', name: '시간봇', desc: '지금 시간 (한국 시간)' },
+  { username: 'bot_calc', name: '계산봇', desc: '계산 (예: 12*(3+4))' },
+  { username: 'bot_roll', name: '주사위봇', desc: '주사위 (예: 2d6 = 6면체 2개)' },
+  { username: 'bot_help', name: '도움말봇', desc: '사용할 수 있는 봇 목록' },
+];
+
+async function ensureBots() {
+  for (const b of BOT_LIST) {
+    await pool.query(
+      `INSERT INTO users (username, name, email, email_verified, is_bot) VALUES ($1,$2,$3,true,true)
+       ON CONFLICT (username) DO UPDATE SET name = EXCLUDED.name, is_bot = true`,
+      [b.username, b.name, b.username + '@bots.local']);
+  }
+}
+
+// 안전한 사칙연산 계산기 (eval 없이 재귀 하강 파서)
+function calcExpr(src) {
+  const s = String(src).replace(/\s+/g, '');
+  if (!s || s.length > 100 || !/^[0-9+\-*/().]+$/.test(s)) throw new Error('bad');
+  let i = 0;
+  const peek = () => s[i];
+  function expr() {
+    let v = term();
+    while (peek() === '+' || peek() === '-') {
+      const op = s[i++];
+      const r = term();
+      v = op === '+' ? v + r : v - r;
+    }
+    return v;
+  }
+  function term() {
+    let v = factor();
+    while (peek() === '*' || peek() === '/') {
+      const op = s[i++];
+      const r = factor();
+      v = op === '*' ? v * r : v / r;
+    }
+    return v;
+  }
+  function factor() {
+    if (peek() === '-') { i++; return -factor(); }
+    if (peek() === '(') {
+      i++;
+      const v = expr();
+      if (peek() !== ')') throw new Error('bad');
+      i++;
+      return v;
+    }
+    const m = /^\d+(\.\d+)?/.exec(s.slice(i));
+    if (!m) throw new Error('bad');
+    i += m[0].length;
+    return Number(m[0]);
+  }
+  const v = expr();
+  if (i !== s.length || !Number.isFinite(v)) throw new Error('bad');
+  return v;
+}
+
+const BOT_REPLIES = {
+  bot_time: () => '지금은 ' + new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul', dateStyle: 'full', timeStyle: 'medium',
+  }).format(new Date()) + ' (한국 시간)',
+  bot_calc: (t) => {
+    try {
+      return t.trim() + ' = ' + calcExpr(t).toLocaleString('ko-KR', { maximumFractionDigits: 6 });
+    } catch (_) {
+      return '계산할 수 없는 식입니다. 예: 12*(3+4)';
+    }
+  },
+  bot_roll: (t) => {
+    const m = /^(\d{1,2})d(\d{1,3})$/i.exec(t.trim());
+    if (!m) return '형식은 "개수d면수"입니다. 예: 2d6';
+    const n = Number(m[1]);
+    const k = Number(m[2]);
+    if (n < 1 || n > 20 || k < 2 || k > 100) return '주사위는 1~20개, 2~100면까지 가능합니다';
+    const rolls = Array.from({ length: n }, () => 1 + Math.floor(Math.random() * k));
+    return rolls.join(', ') + ' → 합계 ' + rolls.reduce((a, b) => a + b, 0);
+  },
+  bot_help: () => BOT_LIST.map((b) => b.name + ': ' + b.desc).join('\n'),
+};
+
+// 봇에게 온 1:1 메시지에 답장 (봇이 아니면 아무 일도 하지 않음)
+async function botReply(botId, userId, text) {
+  const { rows } = await pool.query('SELECT username FROM users WHERE id=$1 AND is_bot=true', [botId]);
+  if (!rows[0]) return;
+  const fn = BOT_REPLIES[rows[0].username];
+  const out = fn ? String(fn(text)).slice(0, 2000) : '';
+  if (!out) return;
+  const ins = await pool.query(
+    `INSERT INTO messages (sender_id, recipient_id, text, kind, enc)
+     VALUES ($1,$2,$3,'text',false)
+     RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to, view_once,
+       NULL::text AS file_name`,
+    [botId, userId, out]);
+  io.to('user:' + userId).emit('message:new', ins.rows[0]);
+}
+
+app.get('/api/bots', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.username, u.name,
+       EXISTS(SELECT 1 FROM friendships f WHERE f.user_id=$1 AND f.friend_id=u.id AND f.status='accepted') AS added
+     FROM users u WHERE u.is_bot=true ORDER BY u.id`,
+    [req.user.id]);
+  res.json(rows.map((r) => ({ ...r, desc: (BOT_LIST.find((b) => b.username === r.username) || {}).desc || '' })));
+}));
+
+app.post('/api/bots/:id/add', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const b = await pool.query('SELECT 1 FROM users WHERE id=$1 AND is_bot=true', [id]);
+  if (!b.rows[0]) return res.status(404).json({ error: '봇을 찾을 수 없습니다' });
+  await pool.query(
+    `INSERT INTO friendships (user_id, friend_id, status) VALUES ($1,$2,'accepted'), ($2,$1,'accepted')
+     ON CONFLICT DO NOTHING`,
+    [req.user.id, id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/bots/:id/add', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  await pool.query(
+    'DELETE FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)',
+    [req.user.id, id]);
+  res.json({ ok: true });
+}));
+
 const PORT = process.env.PORT || 3000;
 init()
   .then(async () => {
     await ensureVapid();
+    await ensureBots();
     // 하루가 지난 미인증 계정 자동 삭제 (1시간마다 확인)
     const purge = () =>
       pool

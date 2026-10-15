@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -1550,6 +1550,7 @@ function emitSend(payload) {
 
 // 1:1은 상대 키로 암호화해서 보내고, 그룹은 기존처럼 보냅니다
 async function sendPayload(extra) {
+  if (isBotChat(current) && !extra.fileId) return emitSend({ to: current.id, text: extra.text || '', fileId: null, replyTo: null });
   try {
     const sk = extra.sk || await sendKey();
     if (!sk) return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null, replyTo: extra.replyTo || null });
@@ -1575,6 +1576,7 @@ $('#compose').onsubmit = (e) => {
 
 // 파일 보내기 (2MB 이하, 이미지 / PDF / 텍스트). 1:1은 파일도 암호화해서 올립니다.
 $('#attach').onchange = async (e) => {
+  if (isBotChat(current)) { alert('봇에게는 파일을 보낼 수 없습니다'); e.target.value = ''; return; }
   const file = e.target.files[0];
   e.target.value = '';
   if (!file || !current) return;
@@ -2261,3 +2263,47 @@ $('#ai-clear').onclick = async () => {
     $('#ai-msg').textContent = e.message;
   }
 };
+
+// ===== 봇 =====
+function isBotChat(c) {
+  if (!c || c.type !== 'dm') return false;
+  const f = friends.find((x) => x.id === c.id);
+  return !!(f && f.is_bot);
+}
+
+async function openBots() {
+  showView('bots');
+  try {
+    const list = await api('/api/bots');
+    const ul = $('#bot-list');
+    ul.innerHTML = '';
+    for (const b of list) {
+      const li = document.createElement('li');
+      const main = document.createElement('div');
+      main.className = 'row-main';
+      main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
+      main.querySelector('.row-name').textContent = b.name;
+      main.querySelector('.row-sub').textContent = b.desc;
+      li.appendChild(main);
+      const act = document.createElement('button');
+      act.type = 'button';
+      act.className = 'ghost small-btn';
+      act.textContent = b.added ? '삭제' : '추가';
+      act.onclick = async () => {
+        try {
+          await api('/api/bots/' + b.id + '/add', { method: b.added ? 'DELETE' : 'POST' });
+          await loadList();
+          await openBots();
+        } catch (e) {
+          alert(e.message);
+        }
+      };
+      li.appendChild(act);
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+$('#btn-bots').onclick = () => openBots();
+$('#bots-back').onclick = () => openMain('settings');
