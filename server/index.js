@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { pool, init } = require('./db');
+const { limit } = require('./ratelimit');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -15,6 +16,7 @@ if (!JWT_SECRET) {
 }
 
 const app = express();
+app.set('trust proxy', 1); // Render 프록시 뒤에서 실제 사용자 IP를 읽기 위함
 app.use(express.json({ limit: '100kb' }));
 app.use(express.static(path.join(__dirname, '..', 'client')));
 
@@ -85,7 +87,7 @@ async function isBlocked(a, b) {
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 
 // ---- 인증 ----
-app.post('/api/auth/signup', wrap(async (req, res) => {
+app.post('/api/auth/signup', limit({ windowMs: 10 * 60 * 1000, max: 5 }), wrap(async (req, res) => {
   const { username, password, name, email } = req.body || {};
   const uname = String(username || '').toLowerCase();
   if (!USERNAME_RE.test(uname)) return res.status(400).json({ error: '아이디는 영소문자·숫자·_ 조합 3~20자입니다' });
@@ -122,7 +124,8 @@ app.post('/api/auth/signup', wrap(async (req, res) => {
   res.status(201).json({ ok: true });
 }));
 
-app.post('/api/auth/verify', wrap(async (req, res) => {
+// 인증 코드 무차별 대입 방지: 이메일당 10분에 10회까지만 확인 허용
+app.post('/api/auth/verify', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (req) => 'verify:' + String((req.body || {}).email || '').toLowerCase() }), wrap(async (req, res) => {
   const { email, code } = req.body || {};
   const { rows } = await pool.query(
     `UPDATE users SET email_verified=true, email_code=NULL
@@ -134,7 +137,7 @@ app.post('/api/auth/verify', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/auth/login', wrap(async (req, res) => {
+app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => 'login:' + req.ip + ':' + String((req.body || {}).username || '').toLowerCase() }), wrap(async (req, res) => {
   const { username, password } = req.body || {};
   const { rows } = await pool.query(
     'SELECT id, username, password_hash, email_verified FROM users WHERE username=$1',
@@ -203,7 +206,7 @@ app.get('/api/auth/kakao/callback', wrap(async (req, res) => {
 
 // ---- 비밀번호 찾기 / 변경 ----
 // 1) 비밀번호 찾기: 이메일로 인증 코드 발송 (가입 여부는 노출하지 않음)
-app.post('/api/auth/forgot', wrap(async (req, res) => {
+app.post('/api/auth/forgot', limit({ windowMs: 15 * 60 * 1000, max: 5, key: (req) => 'forgot:' + String((req.body || {}).email || '').toLowerCase() }), wrap(async (req, res) => {
   const email = String((req.body || {}).email || '').toLowerCase();
   if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: '올바른 이메일을 입력하세요' });
 
@@ -225,7 +228,7 @@ app.post('/api/auth/forgot', wrap(async (req, res) => {
 }));
 
 // 2) 인증 코드로 새 비밀번호 설정
-app.post('/api/auth/reset', wrap(async (req, res) => {
+app.post('/api/auth/reset', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (req) => 'reset:' + String((req.body || {}).email || '').toLowerCase() }), wrap(async (req, res) => {
   const { email, code, password } = req.body || {};
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: '비밀번호는 8자 이상이어야 합니다' });
   const hash = await bcrypt.hash(password, 10);
@@ -266,21 +269,83 @@ app.post('/api/friends', auth, wrap(async (req, res) => {
   if (!f) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
   if (f.id === req.user.id) return res.status(400).json({ error: '자기 자신은 추가할 수 없습니다' });
   if (await isBlocked(req.user.id, f.id)) return res.status(403).json({ error: '차단 관계라 추가할 수 없습니다' });
-  await pool.query(
-    'INSERT INTO friendships (user_id, friend_id) VALUES ($1,$2), ($2,$1) ON CONFLICT DO NOTHING',
+
+  const existing = await pool.query(
+    'SELECT user_id, status FROM friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)',
     [req.user.id, f.id]
   );
-  res.status(201).json({ ok: true });
+  const mine = existing.rows.find((r) => r.user_id === req.user.id);
+  const theirs = existing.rows.find((r) => r.user_id === f.id);
+  if (mine && mine.status === 'accepted') return res.status(409).json({ error: '이미 친구입니다' });
+  if (mine && mine.status === 'pending') return res.status(409).json({ error: '이미 친구 요청을 보냈습니다' });
+  // 상대가 먼저 요청해 둔 경우 바로 수락 처리
+  if (theirs && theirs.status === 'pending') {
+    await acceptFriend(f.id, req.user.id);
+    return res.status(201).json({ ok: true, status: 'accepted' });
+  }
+
+  await pool.query(
+    `INSERT INTO friendships (user_id, friend_id, status) VALUES ($1,$2,'pending')
+     ON CONFLICT (user_id, friend_id) DO NOTHING`,
+    [req.user.id, f.id]
+  );
+  res.status(201).json({ ok: true, status: 'pending' });
 }));
+
+// requester → me 요청을 수락: 양쪽 모두 accepted 로 만든다
+async function acceptFriend(requesterId, myId) {
+  await pool.query(
+    `UPDATE friendships SET status='accepted' WHERE user_id=$1 AND friend_id=$2`,
+    [requesterId, myId]
+  );
+  await pool.query(
+    `INSERT INTO friendships (user_id, friend_id, status) VALUES ($1,$2,'accepted')
+     ON CONFLICT (user_id, friend_id) DO UPDATE SET status='accepted'`,
+    [myId, requesterId]
+  );
+}
 
 app.get('/api/friends', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM friendships f
      JOIN users u ON u.id = f.friend_id
-     WHERE f.user_id=$1 ORDER BY u.name`,
+     WHERE f.user_id=$1 AND f.status='accepted' ORDER BY u.name`,
     [req.user.id]
   );
   res.json(rows);
+}));
+
+// 나에게 온 친구 요청 목록
+app.get('/api/friends/requests', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.username, u.name FROM friendships f
+     JOIN users u ON u.id = f.user_id
+     WHERE f.friend_id=$1 AND f.status='pending' ORDER BY f.created_at`,
+    [req.user.id]
+  );
+  res.json(rows);
+}));
+
+// 친구 요청 수락
+app.post('/api/friends/accept', auth, wrap(async (req, res) => {
+  const requesterId = Number((req.body || {}).userId);
+  const { rows } = await pool.query(
+    `SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='pending'`,
+    [requesterId, req.user.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: '친구 요청을 찾을 수 없습니다' });
+  await acceptFriend(requesterId, req.user.id);
+  res.json({ ok: true });
+}));
+
+// 친구 요청 거절 (요청 기록 삭제)
+app.post('/api/friends/decline', auth, wrap(async (req, res) => {
+  const requesterId = Number((req.body || {}).userId);
+  await pool.query(
+    `DELETE FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='pending'`,
+    [requesterId, req.user.id]
+  );
+  res.json({ ok: true });
 }));
 
 app.post('/api/blocks', auth, wrap(async (req, res) => {
@@ -335,7 +400,10 @@ io.on('connection', (socket) => {
       const text = String((payload || {}).text || '').trim();
       if (!to || !text || text.length > 2000) return reply({ error: '메시지가 올바르지 않습니다' });
       if (await isBlocked(socket.user.id, to)) return reply({ error: '차단 관계라 보낼 수 없습니다' });
-      const f = await pool.query('SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2', [socket.user.id, to]);
+      const f = await pool.query(
+        `SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'`,
+        [socket.user.id, to]
+      );
       if (!f.rows[0]) return reply({ error: '친구에게만 메시지를 보낼 수 있습니다' });
 
       const { rows } = await pool.query(
@@ -354,7 +422,16 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 init()
-  .then(() => server.listen(PORT, () => console.log(`서버 시작: http://localhost:${PORT}`)))
+  .then(() => {
+    // 하루가 지난 미인증 계정 자동 삭제 (1시간마다 확인)
+    const purge = () =>
+      pool
+        .query(`DELETE FROM users WHERE email_verified = false AND created_at < now() - interval '1 day'`)
+        .catch((e) => console.error('미인증 계정 정리 실패:', e.message));
+    purge();
+    setInterval(purge, 60 * 60 * 1000).unref();
+    server.listen(PORT, () => console.log(`서버 시작: http://localhost:${PORT}`));
+  })
   .catch((e) => {
     console.error('DB 초기화 실패', e);
     process.exit(1);

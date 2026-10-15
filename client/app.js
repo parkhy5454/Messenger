@@ -164,6 +164,7 @@ async function start() {
   }
   showView('main');
   $('#me').textContent = me.name + ' (@' + me.username + ')';
+  await loadRequests();
   await loadFriends();
 
   if (socket) socket.disconnect();
@@ -172,6 +173,38 @@ async function start() {
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
+}
+
+// 받은 친구 요청 목록 (수락 / 거절)
+async function loadRequests() {
+  const list = await api('/api/friends/requests');
+  const ul = $('#requests');
+  ul.innerHTML = '';
+  $('#req-box').hidden = list.length === 0;
+  for (const r of list) {
+    const li = document.createElement('li');
+    li.textContent = r.name + '  @' + r.username + ' ';
+    const ok = document.createElement('button');
+    ok.textContent = '수락';
+    ok.onclick = async () => {
+      try {
+        await api('/api/friends/accept', { method: 'POST', body: JSON.stringify({ userId: r.id }) });
+        await loadRequests();
+        await loadFriends();
+      } catch (err) { alert(err.message); }
+    };
+    const no = document.createElement('button');
+    no.className = 'ghost';
+    no.textContent = '거절';
+    no.onclick = async () => {
+      try {
+        await api('/api/friends/decline', { method: 'POST', body: JSON.stringify({ userId: r.id }) });
+        await loadRequests();
+      } catch (err) { alert(err.message); }
+    };
+    li.append(ok, no);
+    ul.appendChild(li);
+  }
 }
 
 async function loadFriends() {
@@ -226,8 +259,9 @@ $('#compose').onsubmit = (e) => {
 $('#add-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
-    await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: $('#add-input').value.trim() }) });
+    const r = await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: $('#add-input').value.trim() }) });
     $('#add-input').value = '';
+    alert(r.status === 'accepted' ? '친구가 되었습니다.' : '친구 요청을 보냈습니다. 상대가 수락하면 친구가 됩니다.');
     await loadFriends();
   } catch (err) {
     alert(err.message);

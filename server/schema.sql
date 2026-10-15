@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS friendships (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, friend_id)
 );
+-- 친구 요청: status = 'pending'(요청 중) | 'accepted'(친구). 기존 행은 모두 친구로 간주
+ALTER TABLE friendships ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted';
 CREATE TABLE IF NOT EXISTS messages (
   id BIGSERIAL PRIMARY KEY,
   sender_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
