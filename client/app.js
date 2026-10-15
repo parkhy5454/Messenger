@@ -2053,8 +2053,78 @@ function isCurrent(t) {
   return current && current.type === t.type && current.id === t.id;
 }
 
+// ===== 대화 내 메시지 검색 (화면에 불러온 메시지 기준, 암호화 대화도 기기에서 풀린 내용으로 검색) =====
+let searchHits = [], searchIdx = -1;
+
+function clearMsgHits() {
+  document.querySelectorAll('#chat-box .msg-row.search-hit').forEach((el) => el.classList.remove('search-hit', 'search-cur'));
+}
+
+function openMsgSearch() {
+  $('#msg-search').hidden = false;
+  $('#msg-search-input').focus();
+}
+
+function closeMsgSearch() {
+  $('#msg-search').hidden = true;
+  $('#msg-search-input').value = '';
+  searchHits = [];
+  searchIdx = -1;
+  $('#msg-search-count').textContent = '';
+  clearMsgHits();
+}
+
+function showMsgHit() {
+  clearMsgHits();
+  if (!searchHits.length) {
+    $('#msg-search-count').textContent = $('#msg-search-input').value.trim() ? '결과 없음' : '';
+    return;
+  }
+  for (const id of searchHits) {
+    const row = document.querySelector('#chat-box .msg-row[data-id="' + id + '"]');
+    if (row) row.classList.add('search-hit');
+  }
+  const cur = document.querySelector('#chat-box .msg-row[data-id="' + searchHits[searchIdx] + '"]');
+  if (cur) {
+    cur.classList.add('search-cur');
+    cur.scrollIntoView({ block: 'center' });
+  }
+  $('#msg-search-count').textContent = (searchIdx + 1) + ' / ' + searchHits.length;
+}
+
+function runMsgSearch() {
+  const q = $('#msg-search-input').value.trim().toLowerCase();
+  searchHits = [];
+  searchIdx = -1;
+  if (q) {
+    for (const m of chatMsgs) {
+      if (m.deleted || m.view_once || !m.text || (m.kind && m.kind !== 'text')) continue;
+      if (String(m.text).toLowerCase().includes(q)) searchHits.push(m.id);
+    }
+    searchIdx = searchHits.length - 1; // 가장 최근 결과부터 보여 줍니다
+  }
+  showMsgHit();
+}
+
+// delta -1: 이전(과거) 결과, +1: 다음(최근) 결과
+function stepMsgHit(delta) {
+  if (!searchHits.length) return;
+  searchIdx = (searchIdx + delta + searchHits.length) % searchHits.length;
+  showMsgHit();
+}
+
+$('#btn-search').onclick = () => ($('#msg-search').hidden ? openMsgSearch() : closeMsgSearch());
+$('#msg-search-input').oninput = runMsgSearch;
+$('#msg-search-input').onkeydown = (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); stepMsgHit(e.shiftKey ? 1 : -1); }
+};
+$('#msg-search-prev').onclick = () => stepMsgHit(-1);
+$('#msg-search-next').onclick = () => stepMsgHit(1);
+$('#msg-search-close').onclick = closeMsgSearch;
+
 async function openChat(t) {
   clearCompose();
+  closeMsgSearch();
   current = t;
   oldestId = null;
   chatMsgs = [];

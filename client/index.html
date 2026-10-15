@@ -509,6 +509,7 @@
         <button id="btn-mute" class="ghost" type="button">알림 끄기</button>
         <button id="btn-pin" class="ghost" type="button">고정</button>
         <button id="btn-summary" class="ghost" type="button">요약</button>
+        <button id="btn-search" class="ghost" type="button">검색</button>
         <div id="dm-actions" hidden>
           <button id="btn-safety" class="ghost" type="button">보안</button>
           <button id="btn-ttl" class="ghost" type="button">자동삭제</button>
@@ -526,6 +527,13 @@
         </div>
       </header>
       <div id="notice-banner" hidden><span id="notice-text"></span></div>
+      <div id="msg-search" class="msg-search" hidden>
+        <input id="msg-search-input" type="search" placeholder="이 대화에서 찾기 (화면에 불러온 메시지 기준)" autocomplete="off" />
+        <span id="msg-search-count" class="muted"></span>
+        <button id="msg-search-prev" class="ghost" type="button" title="이전 결과">↑</button>
+        <button id="msg-search-next" class="ghost" type="button" title="다음 결과">↓</button>
+        <button id="msg-search-close" class="ghost" type="button">닫기</button>
+      </div>
       <div id="summary-panel" hidden><p id="summary-text"></p><button id="summary-close" class="ghost" type="button">닫기</button></div>
       <div id="call-banner" hidden><span id="call-banner-text"></span><button id="call-join" class="primary" type="button">참여</button></div>
       <button id="more" class="link" type="button" hidden>이전 메시지 더 보기</button>
