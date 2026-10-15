@@ -168,3 +168,11 @@ CREATE TABLE IF NOT EXISTS conv_ttl (
   ttl INT NOT NULL,
   PRIMARY KEY (a, b)
 );
+
+-- 그룹 초대 링크 (7일 유효)
+CREATE TABLE IF NOT EXISTS group_invites (
+  token TEXT PRIMARY KEY,
+  group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  created_by INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL
+);

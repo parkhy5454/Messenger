@@ -8,6 +8,11 @@ let activeTab = 'friends';
 const blobCache = new Map();
 
 // 카카오 로그인 후 주소 뒤에 붙은 토큰을 저장하고 주소를 정리합니다.
+const inviteMatch = location.hash.match(/invite=([a-f0-9]+)/);
+if (inviteMatch) {
+  localStorage.setItem('pendingInvite', inviteMatch[1]);
+  history.replaceState(null, '', location.pathname);
+}
 const tokenMatch = location.hash.match(/token=([^&]+)/);
 if (tokenMatch) {
   token = tokenMatch[1];
@@ -838,6 +843,34 @@ async function exportChat() {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
+// ---------- 그룹 초대 링크 ----------
+$('#btn-glink').onclick = async () => {
+  if (!current || current.type !== 'group') return;
+  try {
+    const r = await api('/api/groups/' + current.id + '/invite', { method: 'POST' });
+    prompt('아래 링크를 복사해서 보내세요 (7일 동안 유효)', location.origin + '/#invite=' + r.token);
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+// 링크로 들어온 경우: 로그인 후 그룹 정보를 확인하고 참여합니다
+async function joinPendingInvite() {
+  const token = localStorage.getItem('pendingInvite');
+  if (!token) return;
+  localStorage.removeItem('pendingInvite');
+  try {
+    const info = await api('/api/invites/' + token);
+    if (!confirm('"' + info.name + '" 그룹(' + info.members + '명)에 참여할까요?')) return;
+    const r = await api('/api/invites/' + token + '/join', { method: 'POST' });
+    await loadList();
+    const g = chats.find((c) => c.type === 'group' && c.id === r.id);
+    if (g) openChat(g);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 // ---------- 시작 / 소켓 ----------
 async function start() {
   try {
@@ -872,6 +905,7 @@ async function enterMain() {
   await loadList();
   connectSocket();
   enablePush(true).catch(() => {}); // 이미 허용된 경우에만 조용히 구독
+  joinPendingInvite();
 }
 
 function connectSocket() {

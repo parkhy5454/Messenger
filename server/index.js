@@ -449,6 +449,40 @@ app.post('/api/messages/:id/view', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- 그룹 초대 링크 ----
+// 멤버가 링크를 만듭니다 (7일 유효). 암호화 그룹이면 새 멤버의 키는 기존 멤버가 그룹을 열 때 전달됩니다.
+app.post('/api/groups/:id/invite', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버만 초대 링크를 만들 수 있습니다' });
+  const token = require('crypto').randomBytes(16).toString('hex');
+  await pool.query(
+    "INSERT INTO group_invites (token, group_id, created_by, expires_at) VALUES ($1,$2,$3, now() + interval '7 days')",
+    [token, groupId, req.user.id]);
+  res.status(201).json({ token });
+}));
+
+// 초대 링크 정보 (그룹 이름, 인원)
+app.get('/api/invites/:token', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT g.id, g.name, (SELECT COUNT(*)::int FROM group_members gm WHERE gm.group_id = g.id) AS members
+     FROM group_invites i JOIN groups g ON g.id = i.group_id
+     WHERE i.token=$1 AND i.expires_at > now()`,
+    [String(req.params.token)]);
+  if (!rows[0]) return res.status(404).json({ error: '만료되었거나 잘못된 초대 링크입니다' });
+  res.json(rows[0]);
+}));
+
+// 초대 링크로 참여 (최대 50명)
+app.post('/api/invites/:token/join', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT i.group_id, (SELECT COUNT(*)::int FROM group_members gm WHERE gm.group_id = i.group_id) AS members FROM group_invites i WHERE i.token=$1 AND i.expires_at > now()',
+    [String(req.params.token)]);
+  if (!rows[0]) return res.status(404).json({ error: '만료되었거나 잘못된 초대 링크입니다' });
+  if (rows[0].members >= 50) return res.status(400).json({ error: '그룹 인원이 가득 찼습니다' });
+  await pool.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].group_id, req.user.id]);
+  res.json({ id: rows[0].group_id });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
