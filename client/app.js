@@ -464,6 +464,7 @@ $('#login-form').onsubmit = async (e) => {
 $('#signup-form').onsubmit = async (e) => {
   e.preventDefault();
   pendingEmail = $('#su-email').value;
+  if (!$('#su-agree-terms').checked || !$('#su-agree-privacy').checked) return alert('필수 약관에 모두 동의해 주세요');
   try {
     await api('/api/auth/signup', {
       method: 'POST',
@@ -472,6 +473,8 @@ $('#signup-form').onsubmit = async (e) => {
         name: $('#su-name').value,
         email: pendingEmail,
         password: $('#su-pass').value,
+        agreeTerms: $('#su-agree-terms').checked,
+        agreePrivacy: $('#su-agree-privacy').checked,
       }),
     });
     $('#verify-msg').textContent = '인증 코드를 메일로 보냈습니다. 스팸함도 확인하세요.';
@@ -1777,6 +1780,28 @@ async function loadScheduled() {
 }
 
 // ---------- 시작 / 소켓 ----------
+// 약관이 바뀌었거나 이전에 가입한 이용자는 다시 동의를 받습니다
+function showConsentModal() {
+  $('#consent-terms').checked = false;
+  $('#consent-privacy').checked = false;
+  $('#consent-msg').textContent = '';
+  $('#consent-modal').hidden = false;
+}
+$('#consent-ok').onclick = async () => {
+  if (!$('#consent-terms').checked || !$('#consent-privacy').checked) {
+    $('#consent-msg').textContent = '필수 약관에 모두 동의해 주세요';
+    return;
+  }
+  try {
+    await api('/api/me/consent', { method: 'POST', body: JSON.stringify({ agreeTerms: true, agreePrivacy: true }) });
+    $('#consent-modal').hidden = true;
+    await start();
+  } catch (err) {
+    $('#consent-msg').textContent = err.message;
+  }
+};
+$('#consent-logout').onclick = () => logout();
+
 async function start() {
   try {
     me = await api('/api/me');
@@ -1784,6 +1809,7 @@ async function start() {
     if (err.message.includes('제한')) alert(err.message);
     return logout();
   }
+  if (me.policy_ok === false) return showConsentModal();
   const pw = pendingPassword;
   pendingPassword = null;
   try {

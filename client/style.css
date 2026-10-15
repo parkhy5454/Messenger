@@ -314,6 +314,12 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .qr-login { text-align: center; margin: 12px 0; }
 .qr-login img { width: 200px; height: 200px; image-rendering: pixelated; background: #fff; border-radius: 8px; }
 .qr-code-line strong { font-size: 24px; letter-spacing: 4px; }
+.consent { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-size: 14px; text-align: left; }
+.consent input { margin-top: 3px; }
+.consent-modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+.consent-modal[hidden] { display: none; }
+.consent-box { max-width: 360px; width: 100%; padding: 20px; border-radius: 12px; background: Canvas; color: CanvasText; }
+.consent-box button { width: 100%; margin-top: 8px; }
 .voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.6; } }
 

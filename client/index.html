@@ -45,6 +45,8 @@
         <input id="su-name" placeholder="이름" required />
         <input id="su-email" type="email" placeholder="이메일" required />
         <input id="su-pass" type="password" placeholder="비밀번호 (8자 이상)" autocomplete="new-password" required />
+        <label class="consent"><input id="su-agree-terms" type="checkbox" /><span>[필수] <a href="/terms.html" target="_blank">이용약관</a>에 동의합니다</span></label>
+        <label class="consent"><input id="su-agree-privacy" type="checkbox" /><span>[필수] <a href="/privacy.html" target="_blank">개인정보 처리방침</a>에 동의합니다</span></label>
         <button type="submit" class="primary">가입하고 인증 코드 받기</button>
       </form>
 
@@ -561,6 +563,17 @@
   <script src="/vendor/jszip.min.js"></script>
   <script src="/kakao.js"></script>
   <script src="/ics.js"></script>
+  <div id="consent-modal" class="consent-modal" hidden>
+    <div class="consent-box">
+      <h2>약관 동의</h2>
+      <p>서비스 정책이 새로 정해졌습니다. 계속하려면 아래 내용에 동의해 주세요.</p>
+      <label class="consent"><input id="consent-terms" type="checkbox" /><span>[필수] <a href="/terms.html" target="_blank">이용약관</a>에 동의합니다</span></label>
+      <label class="consent"><input id="consent-privacy" type="checkbox" /><span>[필수] <a href="/privacy.html" target="_blank">개인정보 처리방침</a>에 동의합니다</span></label>
+      <p id="consent-msg" class="msg-line"></p>
+      <button id="consent-ok" class="primary" type="button">동의하고 계속</button>
+      <button id="consent-logout" class="link" type="button">동의하지 않고 로그아웃</button>
+    </div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

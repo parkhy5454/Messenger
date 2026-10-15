@@ -143,12 +143,17 @@ async function isBlocked(a, b) {
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 
 // ---- 인증 ----
+// 약관 동의: 현재 정책 버전과 필수 동의 여부 (약관이 바뀌면 POLICY_VERSION을 올려 재동의를 받습니다)
+const POLICY_VERSION = '2026-10-15';
+const consentOk = (b) => !!(b && b.agreeTerms === true && b.agreePrivacy === true);
+
 app.post('/api/auth/signup', limit({ windowMs: 10 * 60 * 1000, max: 5 }), wrap(async (req, res) => {
   const { username, password, name, email } = req.body || {};
   const uname = String(username || '').toLowerCase();
   if (!USERNAME_RE.test(uname)) return res.status(400).json({ error: '아이디는 영소문자·숫자·_ 조합 3~20자입니다' });
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: '비밀번호는 8자 이상이어야 합니다' });
   if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: '이름과 올바른 이메일을 입력하세요' });
+  if (!consentOk(req.body)) return res.status(400).json({ error: '필수 약관에 동의해 주세요' });
 
   const dup = await pool.query(
     'SELECT 1 FROM users WHERE username=$1 OR email=$2 LIMIT 1',
@@ -169,9 +174,9 @@ app.post('/api/auth/signup', limit({ windowMs: 10 * 60 * 1000, max: 5 }), wrap(a
 
   try {
     await pool.query(
-      `INSERT INTO users (username, name, email, password_hash, email_verified, email_code, email_code_expires)
-       VALUES ($1, $2, $3, $4, false, $5, now() + interval '10 minutes')`,
-      [uname, name.trim(), email.toLowerCase(), hash, sha256(code)]
+      `INSERT INTO users (username, name, email, password_hash, email_verified, email_code, email_code_expires, policy_version, policy_agreed_at)
+       VALUES ($1, $2, $3, $4, false, $5, now() + interval '10 minutes', $6, now())`,
+      [uname, name.trim(), email.toLowerCase(), hash, sha256(code), POLICY_VERSION]
     );
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: '이미 사용 중인 아이디 또는 이메일입니다' });
@@ -394,15 +399,23 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 }));
 
 // ---- 사용자·친구 ----
+// 다시 동의가 필요한지 알려 줍니다 (policy_ok = false 이면 클라이언트가 동의 창을 띄웁니다)
+app.post('/api/me/consent', auth, wrap(async (req, res) => {
+  if (!consentOk(req.body)) return res.status(400).json({ error: '필수 약관에 동의해 주세요' });
+  await pool.query('UPDATE users SET policy_version=$2, policy_agreed_at=now() WHERE id=$1', [req.user.id, POLICY_VERSION]);
+  res.json({ ok: true });
+}));
+
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo, totp_enabled FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo, totp_enabled, policy_version FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
   if (!u) return res.status(401).json({ error: '로그인이 필요합니다' });
   if (u.banned) return res.status(403).json({ error: '이용이 제한된 계정입니다' });
-  res.json(u);
+  const { policy_version, ...rest } = u;
+  res.json({ ...rest, policy_ok: policy_version === POLICY_VERSION });
 }));
 
 // 프로필 수정 (이름, 상태 메시지)

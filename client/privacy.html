@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>개인정보 처리방침</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Noto Sans KR", sans-serif; line-height: 1.6; color: #222; background: #fff; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; margin-top: 32px; }
+    h3 { font-size: 15px; margin-top: 20px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 16px; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .draft { background: #fff4e5; border: 1px solid #f0c36d; padding: 10px 12px; border-radius: 6px; font-size: 14px; }
+    .muted { color: #666; font-size: 13px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #161616; color: #eee; }
+      th { background: #262626; }
+      th, td { border-color: #444; }
+      .draft { background: #3a2f1a; border-color: #7a6130; }
+      .muted { color: #aaa; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>개인정보 처리방침</h1>
+    <p class="draft">※ 법률 검토 전 초안입니다. 검토가 끝나면 이 안내와 [확인 필요] 표시를 삭제합니다.</p>
+    <p class="muted">시행일: 2026년 10월 15일 · 정책 버전: 2026-10-15</p>
+
+    <p>[회사명]은 개인정보를 소중히 다루며, 「개인정보 보호법」을 지킵니다. 처리 목적은 회원 식별과 로그인, 메시지와 파일 전달, 친구·그룹 기능 제공, 부정 이용 방지와 신고 처리, 서비스 개선입니다.</p>
+
+    <h2>1. 수집 항목과 보유 기간</h2>
+    <table>
+      <tr><th>구분</th><th>항목</th><th>수집 방법</th><th>보유 기간</th></tr>
+      <tr><td>회원가입</td><td>아이디, 이름, 이메일, 비밀번호(해시 저장)</td><td>가입 시 입력</td><td>탈퇴 시까지</td></tr>
+      <tr><td>카카오 로그인</td><td>카카오 계정 식별자, 이메일, 닉네임</td><td>카카오 연동</td><td>탈퇴 시까지</td></tr>
+      <tr><td>선택 정보</td><td>상태 메시지, 프로필 정보</td><td>이용자 입력</td><td>삭제 또는 탈퇴 시까지</td></tr>
+      <tr><td>기기·접속 기록</td><td>기기 이름(브라우저와 OS 요약), 최근 접속 시각</td><td>자동 수집</td><td>로그아웃 또는 탈퇴 시까지 [확인 필요]</td></tr>
+      <tr><td>푸시 알림</td><td>푸시 구독 주소, 암호화 키</td><td>알림 허용 시 자동</td><td>구독 해제 또는 탈퇴 시까지</td></tr>
+      <tr><td>메시지·파일</td><td>대화 내용, 첨부 파일</td><td>이용자 입력</td><td>이용자가 삭제하거나 탈퇴 시까지 [확인 필요]</td></tr>
+      <tr><td>신고</td><td>신고자, 대상, 사유</td><td>신고 시 입력</td><td>처리 완료 후 [확인 필요]</td></tr>
+      <tr><td>휴대폰 인증 (현재 비활성)</td><td>전화번호 해시값, 인증 코드 해시값</td><td>인증 시 입력</td><td>인증 코드는 5분 후 만료, 번호 해시는 연결 해제 시까지</td></tr>
+      <tr><td>결제 (현재 보류)</td><td>주문 번호, 금액, 결제 상태, 빌링 키</td><td>결제 시</td><td>전자상거래법에 따라 5년 [확인 필요]</td></tr>
+    </table>
+
+    <h2>2. 종단간 암호화 범위</h2>
+    <p>1:1 대화와 암호화를 켠 그룹 대화는 기기에서 암호화되어, 서버에는 암호문만 저장됩니다. 개인 키는 이용자의 비밀번호로 감싸 저장되므로 운영자가 내용을 열람할 수 없습니다. 암호화하지 않은 대화는 서버에 평문으로 저장됩니다 [확인 필요].</p>
+
+    <h2>3. 처리 위탁과 제3자</h2>
+    <table>
+      <tr><th>수탁자</th><th>위탁 업무</th><th>비고</th></tr>
+      <tr><td>Render</td><td>앱 서버 호스팅</td><td>서버 위치 확인 후 국외 이전 여부 고지 [확인 필요]</td></tr>
+      <tr><td>Neon</td><td>데이터베이스</td><td>서버 위치 확인 [확인 필요]</td></tr>
+      <tr><td>Resend</td><td>인증 메일 발송</td><td>이메일 주소 전달</td></tr>
+      <tr><td>Anthropic</td><td>AI 기능(번역, 요약 등)</td><td>이용자가 요청한 메시지 내용이 전송됨. AI 기능이 켜진 경우에만 해당</td></tr>
+      <tr><td>토스페이먼츠</td><td>결제 처리</td><td>결제 기능 재개 시 적용</td></tr>
+      <tr><td>문자 발송 업체 (미정)</td><td>휴대폰 인증 문자</td><td>휴대폰 인증 활성화 시 적용</td></tr>
+    </table>
+
+    <h2>4. 이용자의 권리</h2>
+    <p>이용자는 개인정보의 열람, 정정, 삭제, 처리 정지를 요구할 수 있습니다. 요청은 아래 보호책임자에게 하며, 처리 결과는 지체 없이 알려 드립니다. 탈퇴 방법은 설정 화면에서 안내합니다 [확인 필요].</p>
+
+    <h2>5. 안전성 확보 조치</h2>
+    <p>비밀번호는 단방향 해시(bcrypt)로 저장하고, 통신 구간은 HTTPS로 보호합니다. 로그인 토큰은 서명해 발급하며, 로그인 시도와 인증 요청에는 횟수 제한을 둡니다. 2단계 인증과 기기 승인 로그인을 제공합니다.</p>
+
+    <h2>6. 만 14세 미만 이용자</h2>
+    <p>만 14세 미만은 가입을 제한하는 방안을 검토하고 있습니다 [확인 필요: 정책 결정].</p>
+
+    <h2>7. 개인정보 보호책임자</h2>
+    <p>성명 [이름], 직책 [직책], 연락처 [이메일 · 전화].</p>
+  </main>
+</body>
+</html>

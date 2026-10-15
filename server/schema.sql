@@ -347,3 +347,7 @@ CREATE TABLE IF NOT EXISTS login_requests (
   status TEXT NOT NULL DEFAULT 'pending',
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+-- 약관 동의 기록 (정책 버전과 동의 시각)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_version TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_agreed_at TIMESTAMPTZ;
