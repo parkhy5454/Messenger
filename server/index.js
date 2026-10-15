@@ -201,6 +201,58 @@ app.get('/api/auth/kakao/callback', wrap(async (req, res) => {
   res.redirect('/#token=' + issue(u));
 }));
 
+// ---- 비밀번호 찾기 / 변경 ----
+// 1) 비밀번호 찾기: 이메일로 인증 코드 발송 (가입 여부는 노출하지 않음)
+app.post('/api/auth/forgot', wrap(async (req, res) => {
+  const email = String((req.body || {}).email || '').toLowerCase();
+  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: '올바른 이메일을 입력하세요' });
+
+  const { rows } = await pool.query('SELECT id FROM users WHERE email=$1 AND email_verified', [email]);
+  if (rows[0]) {
+    const code = String(crypto.randomInt(100000, 1000000));
+    await pool.query(
+      `UPDATE users SET email_code=$2, email_code_expires=now() + interval '10 minutes' WHERE id=$1`,
+      [rows[0].id, sha256(code)]
+    );
+    try {
+      await sendCode(email, code);
+    } catch (e) {
+      console.error('비밀번호 찾기 메일 발송 실패:', e.message);
+      return res.status(502).json({ error: '인증 메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요' });
+    }
+  }
+  res.json({ ok: true, message: '가입된 이메일이면 인증 코드를 보냈습니다' });
+}));
+
+// 2) 인증 코드로 새 비밀번호 설정
+app.post('/api/auth/reset', wrap(async (req, res) => {
+  const { email, code, password } = req.body || {};
+  if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: '비밀번호는 8자 이상이어야 합니다' });
+  const hash = await bcrypt.hash(password, 10);
+  const { rows } = await pool.query(
+    `UPDATE users SET password_hash=$3, email_code=NULL
+     WHERE email=$1 AND email_code=$2 AND email_code_expires > now()
+     RETURNING id`,
+    [String(email || '').toLowerCase(), sha256(String(code || '')), hash]
+  );
+  if (!rows[0]) return res.status(400).json({ error: '코드가 틀렸거나 만료되었습니다' });
+  res.json({ ok: true });
+}));
+
+// 3) 로그인 상태에서 비밀번호 변경 (현재 비밀번호 확인 필요)
+app.post('/api/me/password', auth, wrap(async (req, res) => {
+  const { current, next } = req.body || {};
+  if (typeof next !== 'string' || next.length < 8) return res.status(400).json({ error: '새 비밀번호는 8자 이상이어야 합니다' });
+  const { rows } = await pool.query('SELECT password_hash FROM users WHERE id=$1', [req.user.id]);
+  const u = rows[0];
+  if (!u || !u.password_hash || !(await bcrypt.compare(String(current || ''), u.password_hash))) {
+    return res.status(401).json({ error: '현재 비밀번호가 틀렸습니다' });
+  }
+  const hash = await bcrypt.hash(next, 10);
+  await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user.id, hash]);
+  res.json({ ok: true });
+}));
+
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT id, username, name FROM users WHERE id=$1', [req.user.id]);

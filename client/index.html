@@ -22,6 +22,7 @@
         <input id="li-user" placeholder="아이디" autocomplete="username" required />
         <input id="li-pass" type="password" placeholder="비밀번호" autocomplete="current-password" required />
         <button type="submit" class="primary">로그인</button>
+        <button id="go-forgot" class="link" type="button">비밀번호를 잊으셨나요?</button>
       </form>
 
       <form id="signup-form" hidden>
@@ -51,12 +52,49 @@
     </div>
   </section>
 
+  <!-- 비밀번호 찾기 (이메일 인증 코드로 재설정) -->
+  <section id="view-reset" class="view" hidden>
+    <div class="card">
+      <h1>비밀번호 찾기</h1>
+      <form id="forgot-form">
+        <p class="muted">가입할 때 쓴 이메일을 입력하면 인증 코드를 보내 드립니다.</p>
+        <input id="fg-email" type="email" placeholder="이메일" required />
+        <button type="submit" class="primary">인증 코드 받기</button>
+      </form>
+      <form id="reset-form" hidden>
+        <p class="muted">메일로 받은 6자리 코드와 새 비밀번호를 입력하세요.</p>
+        <input id="rs-code" inputmode="numeric" maxlength="6" placeholder="인증 코드" required />
+        <input id="rs-pass" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" required />
+        <button type="submit" class="primary">비밀번호 변경</button>
+      </form>
+      <button id="reset-back" class="link" type="button">로그인으로 돌아가기</button>
+      <p id="reset-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 비밀번호 변경 (로그인 상태) -->
+  <section id="view-pw" class="view" hidden>
+    <div class="card">
+      <h1>비밀번호 변경</h1>
+      <form id="pw-form">
+        <input id="pw-cur" type="password" placeholder="현재 비밀번호" autocomplete="current-password" required />
+        <input id="pw-new" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" required />
+        <button type="submit" class="primary">변경하기</button>
+      </form>
+      <button id="pw-back" class="link" type="button">돌아가기</button>
+      <p id="pw-msg" class="msg-line"></p>
+    </div>
+  </section>
+
   <!-- 메인: 친구 목록 + 채팅 -->
   <section id="view-main" class="view main" hidden>
     <aside class="side">
       <header>
         <strong id="me"></strong>
-        <button id="logout" class="ghost" type="button">로그아웃</button>
+        <span>
+          <button id="btn-pw" class="ghost" type="button">비번변경</button>
+          <button id="logout" class="ghost" type="button">로그아웃</button>
+        </span>
       </header>
       <form id="add-form" class="add">
         <input id="add-input" placeholder="친구 아이디 추가" required />

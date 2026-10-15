@@ -44,3 +44,6 @@ button.ghost { background:none; border:1px solid var(--line); padding:6px 10px; 
   .chat { height:55vh; }
   .card { margin:4vh auto; }
 }
+
+/* 글자 링크 버튼 (비밀번호 찾기 등) */
+button.link { background:none; border:none; color:var(--primary, #2f6fed); font-size:14px; padding:8px 0; margin-top:6px; width:100%; text-align:center; cursor:pointer; }

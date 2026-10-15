@@ -11,7 +11,7 @@ if (tokenMatch) {
 }
 
 function showView(name) {
-  for (const v of ['auth', 'verify', 'main']) $('#view-' + v).hidden = v !== name;
+  for (const v of ['auth', 'verify', 'main', 'reset', 'pw']) $('#view-' + v).hidden = v !== name;
 }
 
 async function api(path, opts = {}) {
@@ -81,6 +81,77 @@ $('#verify-form').onsubmit = async (e) => {
     $('#auth-msg').textContent = '인증이 끝났습니다. 로그인하세요.';
   } catch (err) {
     $('#verify-msg').textContent = err.message;
+  }
+};
+
+// 비밀번호 찾기 화면 이동 / 복귀
+let resetEmail = '';
+$('#go-forgot').onclick = () => {
+  $('#fg-email').value = '';
+  $('#forgot-form').hidden = false;
+  $('#reset-form').hidden = true;
+  $('#reset-msg').textContent = '';
+  showView('reset');
+};
+$('#reset-back').onclick = () => { showView('auth'); setTab('login'); };
+
+// 1단계: 인증 코드 요청
+$('#forgot-form').onsubmit = async (e) => {
+  e.preventDefault();
+  resetEmail = $('#fg-email').value.trim();
+  try {
+    const r = await api('/api/auth/forgot', {
+      method: 'POST',
+      body: JSON.stringify({ email: resetEmail }),
+    });
+    $('#reset-msg').textContent = r.message;
+    $('#forgot-form').hidden = true;
+    $('#reset-form').hidden = false;
+  } catch (err) {
+    $('#reset-msg').textContent = err.message;
+  }
+};
+
+// 2단계: 코드 + 새 비밀번호로 재설정
+$('#reset-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/auth/reset', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: resetEmail,
+        code: $('#rs-code').value.trim(),
+        password: $('#rs-pass').value,
+      }),
+    });
+    showView('auth');
+    setTab('login');
+    $('#auth-msg').textContent = '비밀번호가 변경되었습니다. 새 비밀번호로 로그인하세요.';
+  } catch (err) {
+    $('#reset-msg').textContent = err.message;
+  }
+};
+
+// 로그인 상태에서 비밀번호 변경
+$('#btn-pw').onclick = () => {
+  $('#pw-cur').value = '';
+  $('#pw-new').value = '';
+  $('#pw-msg').textContent = '';
+  showView('pw');
+};
+$('#pw-back').onclick = () => showView('main');
+$('#pw-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ current: $('#pw-cur').value, next: $('#pw-new').value }),
+    });
+    $('#pw-msg').textContent = '비밀번호가 변경되었습니다.';
+    $('#pw-cur').value = '';
+    $('#pw-new').value = '';
+  } catch (err) {
+    $('#pw-msg').textContent = err.message;
   }
 };
 
