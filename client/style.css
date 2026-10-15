@@ -308,3 +308,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #gb-polls .poll-opt { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
 #gb-polls .poll-actions { display: flex; gap: 8px; margin-top: 6px; }
 #gb-poll-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+
+.voice-btn { padding: 4px 8px; font-size: 18px; line-height: 1; }
+.voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
+@keyframes voice-pulse { 50% { opacity: 0.6; } }

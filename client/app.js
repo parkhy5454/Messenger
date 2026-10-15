@@ -912,6 +912,50 @@ async function openAddFriend() {
   }
 }
 $('#btn-addfriend').onclick = () => openAddFriend();
+
+// ===== 음성 받아쓰기: 마이크로 말하면 입력창에 글자로 들어감. 확인 후 직접 보냄 =====
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let voiceRec = null;
+if (!SpeechRec) $('#btn-voice').hidden = true;
+function startVoice() {
+  const input = $('#msg-input');
+  const base = input.value ? input.value.replace(/\s+$/, '') + ' ' : '';
+  let done = '';
+  const rec = new SpeechRec();
+  rec.lang = 'ko-KR';
+  rec.interimResults = true;
+  rec.continuous = true;
+  rec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) done += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    input.value = (base + done + interim).slice(0, 2000);
+  };
+  rec.onerror = (e) => {
+    if (e.error === 'not-allowed') alert('마이크 사용이 허용되지 않았습니다. 브라우저 설정에서 마이크를 허용하세요.');
+  };
+  rec.onend = () => {
+    input.value = (base + done).slice(0, 2000);
+    voiceRec = null;
+    $('#btn-voice').classList.remove('on');
+  };
+  voiceRec = rec;
+  $('#btn-voice').classList.add('on');
+  try {
+    rec.start();
+  } catch (_) {
+    voiceRec = null;
+    $('#btn-voice').classList.remove('on');
+  }
+}
+$('#btn-voice').onclick = () => {
+  if (voiceRec) voiceRec.stop();
+  else startVoice();
+};
+
 $('#addfriend-back').onclick = () => openMain('settings');
 $('#af-copy').onclick = async () => {
   try {
