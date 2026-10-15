@@ -319,3 +319,11 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #summary-panel { display: flex; gap: 8px; align-items: flex-start; margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px; background: rgba(127,127,127,0.14); }
 #summary-panel[hidden] { display: none; }
 #summary-text { flex: 1; margin: 0; white-space: pre-wrap; font-size: 14px; }
+
+.kk-list { list-style: none; padding: 0; margin: 8px 0; }
+.kk-list li { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 6px 0; }
+.kk-list li > span { flex: 1; min-width: 0; word-break: break-all; }
+.kk-box { max-height: 60vh; overflow-y: auto; margin-top: 8px; }
+.kk-row { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.2); }
+.kk-meta { font-size: 12px; opacity: 0.7; }
+.kk-text { white-space: pre-wrap; word-break: break-word; }

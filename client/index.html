@@ -145,6 +145,32 @@
     </div>
   </section>
 
+  <section id="view-kakaoimport" class="view" hidden>
+    <div class="card">
+      <h1>카톡 대화 가져오기</h1>
+      <p class="muted">카카오톡 대화방 설정의 '대화 내보내기'로 저장한 텍스트 파일(.txt)을 고르세요. 파일은 이 기기 안에서만 읽고 저장하며 서버로 보내지 않습니다. 사진·파일 자체는 가져오지 않고 이름만 남습니다. 기기를 바꾸거나 브라우저 데이터를 지우면 함께 사라집니다.</p>
+      <input id="kk-file" type="file" accept=".txt,text/plain" />
+      <input id="kk-name" type="text" maxlength="60" placeholder="표시 이름 (비우면 카톡 대화방 이름)" />
+      <p id="kk-preview" class="muted"></p>
+      <button id="kk-save" class="primary" type="button">가져오기</button>
+      <p id="kk-msg" class="msg-line"></p>
+      <h2>가져온 대화</h2>
+      <ul id="kk-list" class="kk-list"></ul>
+      <button id="kakaoimport-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
+  <section id="view-kakaoview" class="view" hidden>
+    <div class="card">
+      <h1 id="kkv-title">가져온 대화</h1>
+      <input id="kkv-search" type="search" placeholder="보낸 사람 또는 내용 검색" />
+      <p id="kkv-count" class="muted"></p>
+      <button id="kkv-more" class="ghost" type="button" hidden>이전 300개 더 보기</button>
+      <div id="kkv-box" class="kk-box"></div>
+      <button id="kakaoview-back" class="link" type="button">목록으로</button>
+    </div>
+  </section>
+
   <section id="view-exportall" class="view" hidden>
     <div class="card">
       <h1>전체 데이터 내보내기</h1>
@@ -408,6 +434,7 @@
         <li><button id="btn-plan" class="ghost wide-btn" type="button">프리미엄 구독</button></li>
         <li><button id="btn-quiet" class="ghost wide-btn" type="button">방해 금지 시간</button></li>
         <li><button id="btn-exportall" class="ghost wide-btn" type="button">전체 데이터 내보내기 (JSON)</button></li>
+        <li><button id="btn-kakaoimport" class="ghost wide-btn" type="button">카톡 대화 가져오기</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
@@ -485,6 +512,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <input id="avatar-input" type="file" accept="image/*" hidden />
   <script src="/e2ee.js"></script>
+  <script src="/kakao.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

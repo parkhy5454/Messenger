@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall', 'addfriend'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall', 'addfriend', 'kakaoimport', 'kakaoview'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -1037,6 +1037,155 @@ async function summarizeChat() {
     out.textContent = e.message;
   }
 }
+
+// ===== 카톡 대화 가져오기: 이 기기(IndexedDB)에만 보관. 서버로 보내지 않음 =====
+const KK_MAX_BYTES = 30 * 1024 * 1024;
+let kkPending = null;
+let kkArchive = null;
+let kkShown = 300;
+const kkIndexKey = () => 'kakao:' + me.id + ':index';
+const kkKey = (id) => 'kakao:' + me.id + ':' + id;
+async function kkList() {
+  try {
+    return (await E2EE.loadKV(kkIndexKey())) || [];
+  } catch (_) {
+    return [];
+  }
+}
+function openKakaoImport() {
+  kkPending = null;
+  $('#kk-file').value = '';
+  $('#kk-name').value = '';
+  $('#kk-name').placeholder = '표시 이름 (비우면 카톡 대화방 이름)';
+  $('#kk-preview').textContent = '';
+  $('#kk-msg').textContent = '';
+  showView('kakaoimport');
+  renderKkList();
+}
+async function renderKkList() {
+  const ul = $('#kk-list');
+  ul.innerHTML = '';
+  const list = await kkList();
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = '가져온 대화가 없습니다';
+    ul.appendChild(li);
+  }
+  for (const a of list) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = a.title + ' · 메시지 ' + a.count + '개';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'small-btn';
+    open.textContent = '열기';
+    open.onclick = () => openKakaoView(a.id);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'ghost small-btn';
+    del.textContent = '삭제';
+    del.onclick = () => kkRemove(a.id, a.title);
+    li.append(name, open, del);
+    ul.appendChild(li);
+  }
+}
+async function kkRemove(id, title) {
+  if (!confirm('"' + title + '" 가져온 기록을 이 기기에서 삭제할까요?')) return;
+  try {
+    const list = (await kkList()).filter((x) => x.id !== id);
+    await E2EE.saveKV(kkKey(id), null);
+    await E2EE.saveKV(kkIndexKey(), list);
+    renderKkList();
+  } catch (e) {
+    $('#kk-msg').textContent = e.message;
+  }
+}
+async function kkSave() {
+  if (!kkPending || !kkPending.messages.length) {
+    $('#kk-msg').textContent = '가져올 메시지가 없습니다. 카톡에서 내보낸 텍스트 파일(.txt)인지 확인하세요';
+    return;
+  }
+  const id = Date.now().toString(36);
+  const title = $('#kk-name').value.trim() || kkPending.title;
+  const archive = { id, title, count: kkPending.messages.length, imported_at: new Date().toISOString(), messages: kkPending.messages };
+  try {
+    await E2EE.saveKV(kkKey(id), archive);
+    const list = await kkList();
+    list.unshift({ id, title, count: archive.count });
+    await E2EE.saveKV(kkIndexKey(), list);
+    kkPending = null;
+    $('#kk-file').value = '';
+    $('#kk-preview').textContent = '';
+    $('#kk-msg').textContent = '저장했습니다.';
+    renderKkList();
+  } catch (e) {
+    $('#kk-msg').textContent = '저장에 실패했습니다: ' + e.message;
+  }
+}
+async function openKakaoView(id) {
+  let a = null;
+  try {
+    a = await E2EE.loadKV(kkKey(id));
+  } catch (_) {}
+  if (!a) return alert('대화를 찾을 수 없습니다');
+  kkArchive = a;
+  kkShown = 300;
+  $('#kkv-title').textContent = a.title;
+  $('#kkv-search').value = '';
+  showView('kakaoview');
+  renderKkView();
+}
+function renderKkView() {
+  if (!kkArchive) return;
+  const q = $('#kkv-search').value.trim().toLowerCase();
+  const rows = q
+    ? kkArchive.messages.filter((m) => (m.from + ' ' + m.text).toLowerCase().includes(q))
+    : kkArchive.messages;
+  // 최신 메시지부터 kkShown개만 그림 (많은 대화도 버벅이지 않도록)
+  const shown = rows.slice(Math.max(0, rows.length - kkShown));
+  $('#kkv-count').textContent = (q ? '검색 결과 ' + rows.length + '개 · ' : '') + '전체 ' + kkArchive.count + '개 중 ' + shown.length + '개 표시';
+  $('#kkv-more').hidden = rows.length <= kkShown;
+  const box = $('#kkv-box');
+  box.innerHTML = '';
+  for (const m of shown) {
+    const row = document.createElement('div');
+    row.className = 'kk-row';
+    const meta = document.createElement('div');
+    meta.className = 'kk-meta';
+    meta.textContent = new Date(m.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) + ' · ' + m.from;
+    const text = document.createElement('div');
+    text.className = 'kk-text';
+    text.textContent = m.text;
+    row.append(meta, text);
+    box.appendChild(row);
+  }
+}
+$('#btn-kakaoimport').onclick = () => openKakaoImport();
+$('#kakaoimport-back').onclick = () => openMain('settings');
+$('#kk-file').onchange = async () => {
+  const f = $('#kk-file').files[0];
+  kkPending = null;
+  $('#kk-preview').textContent = '';
+  $('#kk-msg').textContent = '';
+  if (!f) return;
+  if (f.size > KK_MAX_BYTES) return ($('#kk-msg').textContent = '파일이 너무 큽니다 (30MB 이하)');
+  try {
+    const parsed = KakaoImport.parse(await f.text());
+    if (!parsed.messages.length) return ($('#kk-msg').textContent = '카톡 대화 형식이 아닌 것 같습니다');
+    kkPending = parsed;
+    const first = new Date(parsed.messages[0].at).toLocaleDateString('ko-KR');
+    const last = new Date(parsed.messages[parsed.messages.length - 1].at).toLocaleDateString('ko-KR');
+    $('#kk-name').placeholder = parsed.title;
+    $('#kk-preview').textContent = parsed.title + ' · 메시지 ' + parsed.messages.length + '개 · ' + first + ' ~ ' + last;
+  } catch (err) {
+    $('#kk-msg').textContent = err.message;
+  }
+};
+$('#kk-save').onclick = () => kkSave();
+$('#kakaoview-back').onclick = () => { showView('kakaoimport'); renderKkList(); };
+$('#kkv-search').oninput = () => { kkShown = 300; renderKkView(); };
+$('#kkv-more').onclick = () => { kkShown += 300; renderKkView(); };
 
 // 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
 async function handleFriendLink() {
