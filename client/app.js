@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -2631,3 +2631,66 @@ $('#gb-event-form').onsubmit = async (e) => {
     $('#gb-msg').textContent = err.message;
   }
 };
+
+// ===== 전체 데이터 내보내기 (모든 대화를 한 개의 JSON 파일로) =====
+function openExportAll() {
+  $('#ex-msg').textContent = '';
+  showView('exportall');
+}
+$('#btn-exportall').onclick = () => openExportAll();
+$('#exportall-back').onclick = () => openMain('settings');
+$('#ex-run').onclick = () => exportAll();
+
+async function exportAll() {
+  if (!confirm('모든 대화를 한 개의 JSON 파일로 저장합니다. 사진과 파일 자체는 포함되지 않고 이름만 적힙니다. 계속할까요?')) return;
+  const msg = $('#ex-msg');
+  msg.textContent = '내보내는 중...';
+  try {
+    const out = {
+      exported_at: new Date().toISOString(),
+      me: { username: me.username, name: me.name },
+      friends: friends.map((f) => ({ username: f.username, name: f.name })),
+      chats: [],
+    };
+    for (let i = 0; i < chats.length; i++) {
+      const c = chats[i];
+      if (c.type === 'group') await syncGroupKeys(c.id).catch(() => {});
+      const all = [];
+      let before = null;
+      for (;;) {
+        const raw = await api(historyPath(c, before));
+        if (!raw.length) break;
+        const rows = await Promise.all(raw.map((m) => decryptMsg(m)));
+        all.unshift(...rows);
+        before = rows[0].id;
+        if (raw.length < 50) break;
+      }
+      out.chats.push({
+        type: c.type,
+        name: c.name,
+        messages: all.map((m) => ({
+          id: m.id,
+          at: m.created_at,
+          from: m.sender_id === me.id ? me.username : (m.sender_name || c.name),
+          kind: m.kind,
+          text: m.deleted || m.view_once ? null : (m.text || null),
+          file_name: m.file_name || null,
+          edited: !!m.edited_at,
+          deleted: !!m.deleted,
+          view_once: !!m.view_once,
+        })),
+      });
+      msg.textContent = '내보내는 중... ' + (i + 1) + ' / ' + chats.length;
+    }
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'messenger-export-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    msg.textContent = '저장했습니다. (대화 ' + out.chats.length + '개)';
+  } catch (e) {
+    msg.textContent = e.message;
+  }
+}

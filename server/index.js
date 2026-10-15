@@ -1,5 +1,6 @@
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
@@ -819,6 +820,31 @@ app.delete('/api/groups/:id/events/:eid', auth, wrap(async (req, res) => {
   await pool.query('DELETE FROM group_events WHERE id=$1 AND group_id=$2', [Number(req.params.eid), gid]);
   await broadcastBoard(gid);
   res.json({ ok: true });
+}));
+
+// ---- 공개 상태 페이지용 API (로그인 불필요, 내부 수치는 노출하지 않음) ----
+// 장애 이력은 server/incidents.json 에 직접 기록합니다. 형식: [{ "date": "2026-10-14", "title": "...", "detail": "...", "resolved": true }]
+const INCIDENTS_FILE = path.join(__dirname, 'incidents.json');
+app.get('/api/status', wrap(async (req, res) => {
+  const t0 = Date.now();
+  let dbOk = true;
+  try {
+    await pool.query('SELECT 1');
+  } catch (_) {
+    dbOk = false;
+  }
+  let incidents = [];
+  try {
+    incidents = JSON.parse(fs.readFileSync(INCIDENTS_FILE, 'utf8'));
+  } catch (_) {}
+  res.set('Cache-Control', 'no-store');
+  res.json({
+    ok: dbOk,
+    db: dbOk ? 'ok' : 'error',
+    latency_ms: Date.now() - t0,
+    checked_at: new Date().toISOString(),
+    incidents: (Array.isArray(incidents) ? incidents : []).slice(0, 50),
+  });
 }));
 
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----

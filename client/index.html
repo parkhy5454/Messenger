@@ -121,6 +121,17 @@
     </div>
   </div>
 
+  <!-- 전체 데이터 내보내기 -->
+  <section id="view-exportall" class="view" hidden>
+    <div class="card">
+      <h1>전체 데이터 내보내기</h1>
+      <p class="muted">모든 1:1 대화와 그룹 대화를 복호화해서 한 개의 JSON 파일로 저장합니다. 내 기기에서만 처리되며 서버로 다시 보내지 않습니다. 사진과 파일 자체는 이름만 포함됩니다.</p>
+      <button id="ex-run" class="primary" type="button">내보내기 시작</button>
+      <p id="ex-msg" class="msg-line"></p>
+      <button id="exportall-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <!-- 방해 금지 시간 -->
   <section id="view-quiet" class="view" hidden>
     <div class="card">
@@ -364,6 +375,7 @@
         <li><button id="btn-bots" class="ghost wide-btn" type="button">봇 (명령 도우미)</button></li>
         <li><button id="btn-plan" class="ghost wide-btn" type="button">프리미엄 구독</button></li>
         <li><button id="btn-quiet" class="ghost wide-btn" type="button">방해 금지 시간</button></li>
+        <li><button id="btn-exportall" class="ghost wide-btn" type="button">전체 데이터 내보내기 (JSON)</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
