@@ -203,3 +203,6 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
   text TEXT NOT NULL,
   send_at TIMESTAMPTZ NOT NULL
 );
+
+-- 예약 전송: 파일 첨부 지원
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS file_id INT;

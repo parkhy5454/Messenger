@@ -612,8 +612,27 @@ app.post('/api/scheduled', auth, wrap(async (req, res) => {
   }
   const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, to]);
   if (!f.rows[0]) return res.status(400).json({ error: '친구에게만 예약할 수 있습니다' });
-  await pool.query('INSERT INTO scheduled_messages (sender_id, recipient_id, text, send_at) VALUES ($1,$2,$3,$4)', [req.user.id, to, text, at]);
+  const fileId = b.fileId ? Number(b.fileId) : null;
+  if (fileId) {
+    const fr = await pool.query('SELECT 1 FROM files WHERE id=$1 AND uploader_id=$2', [fileId, req.user.id]);
+    if (!fr.rows[0]) return res.status(400).json({ error: '파일을 찾을 수 없습니다' });
+  }
+  await pool.query('INSERT INTO scheduled_messages (sender_id, recipient_id, text, send_at, file_id) VALUES ($1,$2,$3,$4,$5)', [req.user.id, to, text, at, fileId]);
   res.status(201).json({ ok: true });
+}));
+
+// ---- 예약 목록 / 취소 ----
+app.get('/api/scheduled', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT s.id, s.recipient_id, s.send_at, s.file_id, u.name AS recipient_name FROM scheduled_messages s JOIN users u ON u.id = s.recipient_id WHERE s.sender_id=$1 ORDER BY s.send_at',
+    [req.user.id]);
+  res.json(rows);
+}));
+app.delete('/api/scheduled/:id', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('DELETE FROM scheduled_messages WHERE id=$1 AND sender_id=$2 RETURNING file_id', [Number(req.params.id), req.user.id]);
+  if (!rows[0]) return res.status(404).json({ error: '예약 메시지를 찾을 수 없습니다' });
+  if (rows[0].file_id) await pool.query('DELETE FROM files WHERE id=$1', [rows[0].file_id]);
+  res.json({ ok: true });
 }));
 
 app.get('/api/blocks', auth, wrap(async (req, res) => {
@@ -1343,16 +1362,21 @@ async function purgeExpired() {
 }
 setInterval(() => purgeExpired().catch((e) => console.error('자동 삭제 오류:', e)), 30000);
 
-// ---- 예약 전송: 시간이 되면 메시지를 보냅니다 (30초마다 확인) ----
+// ---- 예약 전송: 시간이 되면 메시지를 보냅니다 (10초마다 확인) ----
 async function sendDueScheduled() {
-  const { rows } = await pool.query('SELECT id, sender_id, recipient_id, text FROM scheduled_messages WHERE send_at <= now() ORDER BY send_at LIMIT 100');
+  const { rows } = await pool.query('SELECT id, sender_id, recipient_id, text, file_id FROM scheduled_messages WHERE send_at <= now() ORDER BY send_at LIMIT 100');
   for (const r of rows) {
     await pool.query('DELETE FROM scheduled_messages WHERE id=$1', [r.id]);
     const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [r.sender_id, r.recipient_id]);
-    if (!f.rows[0] || (await isBlocked(r.sender_id, r.recipient_id))) continue;
+    if (!f.rows[0] || (await isBlocked(r.sender_id, r.recipient_id))) {
+      if (r.file_id) await pool.query('DELETE FROM files WHERE id=$1', [r.file_id]).catch(() => {});
+      continue;
+    }
     const { rows: m } = await pool.query(
-      "INSERT INTO messages (sender_id, recipient_id, text, kind, enc) VALUES ($1,$2,$3,'text',true) RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc",
-      [r.sender_id, r.recipient_id, r.text]);
+      'INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc) VALUES ($1,$2,$3,$4,$5,true) ' +
+      'RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, ' +
+      '(SELECT name FROM files WHERE id = messages.file_id) AS file_name',
+      [r.sender_id, r.recipient_id, r.text, r.file_id ? 'file' : 'text', r.file_id]);
     io.to(['user:' + r.recipient_id, 'user:' + r.sender_id]).emit('message:new', m[0]);
     const sn = await pool.query('SELECT name FROM users WHERE id=$1', [r.sender_id]);
     notifyUsers([r.recipient_id], {
@@ -1363,4 +1387,4 @@ async function sendDueScheduled() {
     }, r.sender_id).catch(() => {});
   }
 }
-setInterval(() => sendDueScheduled().catch((e) => console.error('예약 전송 오류:', e)), 30000);
+setInterval(() => sendDueScheduled().catch((e) => console.error('예약 전송 오류:', e)), 10000);

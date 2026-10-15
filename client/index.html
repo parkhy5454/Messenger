@@ -107,7 +107,30 @@
     </div>
   </section>
 
-  <!-- 보안 · 기기 관리 -->
+    <!-- 예약 전송 대화상자 -->
+  <div id="sched-dialog" hidden>
+    <div id="sched-sheet">
+      <h2>예약 전송</h2>
+      <textarea id="sd-text" rows="3" placeholder="보낼 내용 (선택)"></textarea>
+      <div class="sd-row"><button id="sd-attach" class="ghost" type="button">📎 파일 첨부</button><span id="sd-file" class="muted"></span></div>
+      <label class="muted" for="sd-time">보낼 시간</label>
+      <input id="sd-time" type="datetime-local" />
+      <p id="sd-check" class="muted"></p>
+      <div class="sd-row"><button id="sd-cancel" class="ghost" type="button">취소</button><button id="sd-ok" class="primary" type="button" disabled>예약하기</button></div>
+      <input id="sd-file-input" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" hidden />
+    </div>
+  </div>
+
+  <!-- 예약 메시지 목록 -->
+  <section id="view-scheduled" class="view" hidden>
+    <div class="card">
+      <h1>예약 메시지</h1>
+      <ul id="sched-list" class="friends"></ul>
+      <button id="sched-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
+<!-- 보안 · 기기 관리 -->
   <section id="view-security" class="view" hidden>
     <div class="card">
       <h1>보안 · 기기 관리</h1>
@@ -221,6 +244,7 @@
       <ul class="setting-list">
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
+        <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
         <li><button id="btn-blocks" class="ghost wide-btn" type="button">차단 목록</button></li>
         <li><button id="btn-avatar" class="ghost wide-btn" type="button">프로필 사진 바꾸기</button></li>

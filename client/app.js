@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -994,25 +994,127 @@ $('#btn-safety').onclick = async () => {
   }
 };
 
-// 예약 전송: 지금 입력한 내용을 암호화해서 정해진 시간에 보냅니다
-$('#btn-schedule').onclick = async () => {
+// ---------- 예약 전송 (대화상자 · 목록 · 취소) ----------
+const SCHED_MAX_MS = 30 * 24 * 3600 * 1000;
+let schedFile = null; // { fileId, meta } - 예약에 붙일 암호화된 파일
+function toLocalInput(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+// 시간을 입력하는 즉시 확인: 전송까지 남은 시간을 보여 주고, 조건이 맞지 않으면 예약 버튼을 막습니다
+function sdCheck() {
+  const v = $('#sd-time').value;
+  const at = v ? new Date(v) : null;
+  let msg = '보낼 시간을 선택하세요';
+  let ok = false;
+  if (at && !isNaN(at)) {
+    const diff = at - Date.now();
+    if (diff < 60 * 1000) msg = '지금부터 1분 이후 시간을 선택하세요';
+    else if (diff > SCHED_MAX_MS) msg = '30일 이내 시간만 예약할 수 있습니다';
+    else {
+      const mins = Math.round(diff / 60000);
+      const left = mins >= 60 ? Math.floor(mins / 60) + '시간 ' + (mins % 60) + '분' : mins + '분';
+      msg = at.toLocaleString('ko-KR') + ' 전송 (' + left + ' 후)';
+      ok = true;
+    }
+  }
+  if (!$('#sd-text').value.trim() && !schedFile) {
+    ok = false;
+    msg = '내용이나 파일을 입력하세요';
+  }
+  $('#sd-check').textContent = msg;
+  $('#sd-ok').disabled = !ok;
+}
+$('#btn-schedule').onclick = () => {
   if (!current || current.type !== 'dm') return alert('1:1 대화에서만 예약 전송할 수 있습니다');
-  const text = $('#msg-input').value.trim();
-  if (!text) return alert('예약할 메시지를 입력하세요');
-  const when = prompt('예약 시간을 입력하세요 (예: 2026-10-16 09:00, 30일 이내)');
-  if (!when) return;
-  const at = new Date(when.trim().replace(' ', 'T'));
-  if (isNaN(at) || at <= new Date()) return alert('현재 이후의 올바른 시간을 입력하세요');
+  schedFile = null;
+  $('#sd-text').value = $('#msg-input').value.trim();
+  $('#sd-file').textContent = '';
+  $('#sd-time').min = toLocalInput(new Date(Date.now() + 60 * 1000));
+  $('#sd-time').max = toLocalInput(new Date(Date.now() + SCHED_MAX_MS));
+  $('#sd-time').value = '';
+  $('#sched-dialog').hidden = false;
+  sdCheck();
+};
+$('#sd-text').oninput = sdCheck;
+$('#sd-time').oninput = sdCheck;
+$('#sd-time').onchange = sdCheck;
+$('#sd-cancel').onclick = () => { $('#sched-dialog').hidden = true; };
+$('#sd-attach').onclick = () => $('#sd-file-input').click();
+$('#sd-file-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (file.size > 20 * 1024 * 1024) return alert('20MB 이하 파일만 보낼 수 있습니다');
   try {
     const k = await peerKey(current.id);
-    const body = await E2EE.seal(k, { t: text, f: null });
-    await api('/api/scheduled', { method: 'POST', body: JSON.stringify({ to: current.id, text: body, sendAt: at.toISOString() }) });
+    const sealed = await E2EE.sealBytes(k, new Uint8Array(await file.arrayBuffer()));
+    const r = await fetch('/api/files', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent('encrypted') },
+      body: sealed.data,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '파일 업로드에 실패했습니다');
+    schedFile = { fileId: j.id, meta: { name: file.name, mime: file.type || 'application/octet-stream', iv: sealed.iv } };
+    $('#sd-file').textContent = '📎 ' + file.name;
+    sdCheck();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+$('#sd-ok').onclick = async () => {
+  const at = new Date($('#sd-time').value);
+  try {
+    const k = await peerKey(current.id);
+    const body = await E2EE.seal(k, { t: $('#sd-text').value.trim(), f: schedFile ? schedFile.meta : null });
+    await api('/api/scheduled', {
+      method: 'POST',
+      body: JSON.stringify({ to: current.id, text: body, fileId: schedFile ? schedFile.fileId : null, sendAt: at.toISOString() }),
+    });
+    schedFile = null;
+    $('#sched-dialog').hidden = true;
     $('#msg-input').value = '';
     alert('예약되었습니다: ' + at.toLocaleString('ko-KR'));
   } catch (err) {
     alert(err.message);
   }
 };
+
+// 예약 목록 / 취소
+$('#btn-sched-list').onclick = () => openScheduled().catch((err) => alert(err.message));
+$('#sched-back').onclick = () => openMain('settings');
+async function openScheduled() {
+  showView('scheduled');
+  await loadScheduled();
+}
+async function loadScheduled() {
+  const list = await api('/api/scheduled');
+  const ul = $('#sched-list');
+  ul.innerHTML = '';
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '예약된 메시지가 없습니다';
+    ul.appendChild(li);
+    return;
+  }
+  for (const s of list) {
+    const li = document.createElement('li');
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
+    main.querySelector('.row-name').textContent = s.recipient_name + (s.file_id ? ' · 파일 포함' : '');
+    main.querySelector('.row-sub').textContent = new Date(s.send_at).toLocaleString('ko-KR') + ' 전송';
+    li.appendChild(main);
+    li.appendChild(btn('취소', async () => {
+      if (!confirm('이 예약을 취소할까요?')) return;
+      await api('/api/scheduled/' + s.id, { method: 'DELETE' });
+      await loadScheduled();
+    }, 'link'));
+    ul.appendChild(li);
+  }
+}
 
 // ---------- 시작 / 소켓 ----------
 async function start() {
