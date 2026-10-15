@@ -235,3 +235,24 @@ CREATE INDEX IF NOT EXISTS ai_messages_user ON ai_messages (user_id, id);
 
 -- 봇 계정 표시 (로그인 불가)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_bot BOOLEAN NOT NULL DEFAULT false;
+
+-- 프리미엄 구독 (토스페이먼츠 빌링키 자동결제)
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  customer_key TEXT NOT NULL UNIQUE,
+  billing_key TEXT,
+  status TEXT NOT NULL DEFAULT 'none',
+  period_end TIMESTAMPTZ,
+  next_billing_at TIMESTAMPTZ,
+  retry_count INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS payments (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  order_id TEXT NOT NULL,
+  amount INT NOT NULL,
+  status TEXT NOT NULL,
+  payment_key TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

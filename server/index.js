@@ -459,10 +459,10 @@ app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
 const AI_MODEL = process.env.AI_MODEL || 'claude-haiku-5-5';
 const AI_SYSTEM = '당신은 메신저 앱 안의 AI 어시스턴트입니다. 한국어로 간결하고 정확하게 답하세요.';
 const aiHits = new Map(); // userId -> 최근 요청 시각들 (분당 10회 제한)
-function aiRateOk(uid) {
+function aiRateOk(uid, max = 10) {
   const now = Date.now();
   const arr = (aiHits.get(uid) || []).filter((t) => now - t < 60000);
-  const ok = arr.length < 10;
+  const ok = arr.length < max;
   if (ok) arr.push(now);
   aiHits.set(uid, arr);
   return ok;
@@ -484,11 +484,12 @@ app.post('/api/ai/messages', auth, wrap(async (req, res) => {
   if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'AI 어시스턴트가 아직 설정되지 않았습니다' });
   const text = String((req.body || {}).text || '').trim();
   if (!text || text.length > 2000) return res.status(400).json({ error: '메시지는 1~2000자로 입력하세요' });
-  if (!aiRateOk(req.user.id)) return res.status(429).json({ error: '잠시 후 다시 시도해 주세요 (분당 10회 제한)' });
+  const premium = await isPremium(req.user.id);
+  if (!aiRateOk(req.user.id, premium ? 30 : 10)) return res.status(429).json({ error: '잠시 후 다시 시도해 주세요 (분당 ' + (premium ? 30 : 10) + '회 제한)' });
 
   await pool.query("INSERT INTO ai_messages (user_id, role, content) VALUES ($1,'user',$2)", [req.user.id, text]);
   const { rows } = await pool.query(
-    "SELECT role, content FROM (SELECT id, role, content FROM ai_messages WHERE user_id=$1 ORDER BY id DESC LIMIT 20) t ORDER BY id",
+    "SELECT role, content FROM (SELECT id, role, content FROM ai_messages WHERE user_id=$1 ORDER BY id DESC LIMIT " + (premium ? 50 : 20) + ") t ORDER BY id",
     [req.user.id]);
   const history = rows.map((m) => ({ role: m.role, content: m.content }));
   while (history.length && history[0].role !== 'user') history.shift(); // 대화는 user 메시지로 시작해야 함
@@ -517,6 +518,148 @@ app.post('/api/ai/messages', auth, wrap(async (req, res) => {
   res.json(ins.rows[0]);
 }));
 
+// ---- 프리미엄 구독 (토스페이먼츠 자동결제: 빌링키 발급 후 매월 청구) ----
+// 환경변수: TOSS_CLIENT_KEY, TOSS_SECRET_KEY (없으면 결제 기능이 꺼진 상태로 동작), PREMIUM_PRICE (기본 3900원)
+const PREMIUM_PRICE = Number(process.env.PREMIUM_PRICE || 3900);
+const TOSS_CLIENT = process.env.TOSS_CLIENT_KEY || '';
+const TOSS_SECRET = process.env.TOSS_SECRET_KEY || '';
+const PROFILE_MAX_PREMIUM = 10;
+// 프리미엄 여부: 기간이 남아 있거나, 자동결제 중인 구독이 하루 안에 끝난 경우(결제 지연 여유)
+const PREMIUM_SQL = "(period_end > now() OR (status = 'active' AND period_end > now() - interval '1 day'))";
+
+async function isPremium(uid) {
+  const { rows } = await pool.query(`SELECT 1 FROM subscriptions WHERE user_id=$1 AND ${PREMIUM_SQL}`, [uid]);
+  return rows.length > 0;
+}
+
+async function tossCall(path, body) {
+  const r = await fetch('https://api.tosspayments.com/v1' + path, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(TOSS_SECRET + ':').toString('base64'),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.message || '결제 처리 중 오류가 발생했습니다');
+  return j;
+}
+
+function addOneMonth(d) {
+  const x = new Date(d);
+  x.setMonth(x.getMonth() + 1);
+  return x;
+}
+
+// 저장된 빌링키로 한 달치 요금 청구
+async function chargeSubscription(sub) {
+  const billingKey = decSecret(sub.billing_key).toString();
+  const orderId = 'sub' + sub.user_id + '_' + Date.now();
+  const pay = await tossCall('/billing/' + encodeURIComponent(billingKey), {
+    customerKey: sub.customer_key,
+    amount: PREMIUM_PRICE,
+    orderId,
+    orderName: '메신저 프리미엄 월 구독',
+  });
+  await pool.query(
+    "INSERT INTO payments (user_id, order_id, amount, status, payment_key) VALUES ($1,$2,$3,'done',$4)",
+    [sub.user_id, orderId, PREMIUM_PRICE, pay.paymentKey || null]);
+  return pay;
+}
+
+app.get('/api/billing/config', auth, wrap(async (req, res) => {
+  const me = req.user.id;
+  await pool.query(
+    "INSERT INTO subscriptions (user_id, customer_key) VALUES ($1,$2) ON CONFLICT (user_id) DO NOTHING",
+    [me, 'cust' + me + '_' + crypto.randomBytes(12).toString('hex')]);
+  const { rows } = await pool.query('SELECT customer_key FROM subscriptions WHERE user_id=$1', [me]);
+  res.json({ clientKey: TOSS_CLIENT || null, customerKey: rows[0].customer_key, price: PREMIUM_PRICE });
+}));
+
+// 결제창에서 돌아온 authKey 로 빌링키를 발급받고 첫 달 요금을 청구
+app.post('/api/billing/issue', auth, wrap(async (req, res) => {
+  if (!TOSS_SECRET) return res.status(503).json({ error: '결제가 아직 설정되지 않았습니다' });
+  const me = req.user.id;
+  const authKey = String((req.body || {}).authKey || '');
+  const customerKey = String((req.body || {}).customerKey || '');
+  const s = await pool.query('SELECT customer_key FROM subscriptions WHERE user_id=$1', [me]);
+  if (!s.rows[0] || s.rows[0].customer_key !== customerKey || !authKey) {
+    return res.status(400).json({ error: '잘못된 결제 요청입니다' });
+  }
+  let billingKey;
+  try {
+    const j = await tossCall('/billing/authorizations/issue', { authKey, customerKey });
+    billingKey = j.billingKey;
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  // 빌링키는 DB에 암호화해서 저장 (TOTP 비밀키와 같은 방식)
+  await pool.query('UPDATE subscriptions SET billing_key=$2 WHERE user_id=$1', [me, encSecret(Buffer.from(billingKey))]);
+  const sub = (await pool.query('SELECT * FROM subscriptions WHERE user_id=$1', [me])).rows[0];
+  try {
+    await chargeSubscription(sub);
+  } catch (e) {
+    return res.status(400).json({ error: '첫 결제에 실패했습니다: ' + e.message });
+  }
+  const end = addOneMonth(new Date());
+  await pool.query(
+    "UPDATE subscriptions SET status='active', period_end=$2, next_billing_at=$2, retry_count=0, updated_at=now() WHERE user_id=$1",
+    [me, end]);
+  res.json({ ok: true });
+}));
+
+// 해지: 남은 기간까지는 이용 가능, 다음 자동결제는 하지 않음
+app.post('/api/billing/cancel', auth, wrap(async (req, res) => {
+  await pool.query(
+    "UPDATE subscriptions SET status='canceled', next_billing_at=NULL, updated_at=now() WHERE user_id=$1 AND status='active'",
+    [req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/billing/status', auth, wrap(async (req, res) => {
+  const me = req.user.id;
+  const s = (await pool.query(
+    `SELECT status, period_end, (${PREMIUM_SQL}) AS premium FROM subscriptions WHERE user_id=$1`, [me])).rows[0] || {};
+  const payments = (await pool.query(
+    'SELECT amount, status, created_at FROM payments WHERE user_id=$1 ORDER BY id DESC LIMIT 10', [me])).rows;
+  res.json({
+    premium: !!s.premium,
+    status: s.status || 'none',
+    period_end: s.period_end || null,
+    price: PREMIUM_PRICE,
+    payments,
+  });
+}));
+
+// 자동결제 작업 (1시간마다): 결제일이 된 활성 구독을 청구. 실패하면 하루 뒤 재시도, 3번 실패 시 중단
+async function chargeDueSubscriptions() {
+  const { rows } = await pool.query(
+    "SELECT * FROM subscriptions WHERE status='active' AND billing_key IS NOT NULL AND next_billing_at <= now() LIMIT 50");
+  for (const sub of rows) {
+    try {
+      await chargeSubscription(sub);
+      const base = new Date(sub.period_end) > new Date() ? new Date(sub.period_end) : new Date();
+      const end = addOneMonth(base);
+      await pool.query(
+        'UPDATE subscriptions SET period_end=$2, next_billing_at=$2, retry_count=0, updated_at=now() WHERE user_id=$1',
+        [sub.user_id, end]);
+    } catch (e) {
+      const n = sub.retry_count + 1;
+      if (n >= 3) {
+        await pool.query(
+          "UPDATE subscriptions SET status='past_due', next_billing_at=NULL, retry_count=$2, updated_at=now() WHERE user_id=$1",
+          [sub.user_id, n]);
+      } else {
+        await pool.query(
+          "UPDATE subscriptions SET retry_count=$2, next_billing_at=now() + interval '1 day', updated_at=now() WHERE user_id=$1",
+          [sub.user_id, n]);
+      }
+      console.error('구독 결제 실패:', sub.user_id, e.message);
+    }
+  }
+}
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;
@@ -538,7 +681,8 @@ app.post('/api/profiles', auth, wrap(async (req, res) => {
   const v = validProfile(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
   const c = await pool.query('SELECT COUNT(*)::int AS n FROM profiles WHERE user_id=$1', [req.user.id]);
-  if (c.rows[0].n >= PROFILE_MAX) return res.status(400).json({ error: `프로필은 최대 ${PROFILE_MAX}개까지 만들 수 있습니다` });
+  const pmax = (await isPremium(req.user.id)) ? PROFILE_MAX_PREMIUM : PROFILE_MAX;
+  if (c.rows[0].n >= pmax) return res.status(400).json({ error: `프로필은 최대 ${pmax}개까지 만들 수 있습니다` });
   const r = await pool.query(
     'INSERT INTO profiles (user_id, name, status_msg) VALUES ($1,$2,$3) RETURNING id', [req.user.id, v.name, v.statusMsg]);
   res.json({ id: r.rows[0].id });
@@ -758,8 +902,9 @@ app.post('/api/scheduled', auth, wrap(async (req, res) => {
   const text = String(b.text || '');
   const at = new Date(b.sendAt);
   if (!to || !text || text.length > 20000) return res.status(400).json({ error: '내용을 확인하세요' });
-  if (isNaN(at) || at <= new Date() || at - new Date() > 30 * 24 * 3600 * 1000) {
-    return res.status(400).json({ error: '예약 시간은 지금부터 30일 이내여야 합니다' });
+  const maxDays = (await isPremium(req.user.id)) ? 90 : 30;
+  if (isNaN(at) || at <= new Date() || at - new Date() > maxDays * 24 * 3600 * 1000) {
+    return res.status(400).json({ error: `예약 시간은 지금부터 ${maxDays}일 이내여야 합니다` });
   }
   const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, to]);
   if (!f.rows[0]) return res.status(400).json({ error: '친구에게만 예약할 수 있습니다' });
@@ -1725,6 +1870,7 @@ init()
   .then(async () => {
     await ensureVapid();
     await ensureBots();
+    setInterval(() => chargeDueSubscriptions().catch(() => {}), 60 * 60 * 1000);
     // 하루가 지난 미인증 계정 자동 삭제 (1시간마다 확인)
     const purge = () =>
       pool

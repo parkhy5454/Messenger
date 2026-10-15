@@ -121,6 +121,27 @@
     </div>
   </div>
 
+  <!-- 프리미엄 구독 -->
+  <section id="view-plan" class="view" hidden>
+    <div class="card">
+      <h1>프리미엄 구독</h1>
+      <p id="plan-state" class="muted"></p>
+      <p><b id="plan-price"></b></p>
+      <ul class="plain">
+        <li>프로필 10개까지 (무료 5개)</li>
+        <li>AI 어시스턴트 분당 30회, 대화 맥락 50개 (무료 분당 10회)</li>
+        <li>예약 메시지 90일 후까지 (무료 30일)</li>
+      </ul>
+      <button id="plan-subscribe" class="primary" type="button" hidden>구독하기</button>
+      <button id="plan-cancel" class="ghost" type="button" hidden>구독 해지</button>
+      <p id="plan-msg" class="msg-line"></p>
+      <h2>결제 내역</h2>
+      <ul id="plan-payments" class="plain"></ul>
+      <p class="muted">구독은 매월 자동 결제됩니다. 해지하면 남은 기간까지 이용할 수 있고 다음 결제는 진행되지 않습니다. 환불은 이용약관과 환불 정책을 따릅니다.</p>
+      <button id="plan-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <!-- 봇 -->
   <section id="view-bots" class="view" hidden>
     <div class="card">
@@ -293,6 +314,7 @@
         <li><button id="btn-profiles" class="ghost wide-btn" type="button">프로필 관리 (친구별 프로필)</button></li>
         <li><button id="btn-ai" class="ghost wide-btn" type="button">AI 어시스턴트</button></li>
         <li><button id="btn-bots" class="ghost wide-btn" type="button">봇 (명령 도우미)</button></li>
+        <li><button id="btn-plan" class="ghost wide-btn" type="button">프리미엄 구독</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>

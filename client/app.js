@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -996,7 +996,8 @@ $('#btn-safety').onclick = async () => {
 };
 
 // ---------- 예약 전송 (대화상자 · 목록 · 취소) ----------
-const SCHED_MAX_MS = 30 * 24 * 3600 * 1000;
+let PREMIUM_ON = false;
+const schedMaxMs = () => (PREMIUM_ON ? 90 : 30) * 24 * 3600 * 1000;
 let schedFile = null; // { fileId, meta } - 예약에 붙일 암호화된 파일
 function toLocalInput(d) {
   const p = (n) => String(n).padStart(2, '0');
@@ -1011,7 +1012,7 @@ function sdCheck() {
   if (at && !isNaN(at)) {
     const diff = at - Date.now();
     if (diff < 60 * 1000) msg = '지금부터 1분 이후 시간을 선택하세요';
-    else if (diff > SCHED_MAX_MS) msg = '30일 이내 시간만 예약할 수 있습니다';
+    else if (diff > schedMaxMs()) msg = (PREMIUM_ON ? '90' : '30') + '일 이내 시간만 예약할 수 있습니다';
     else {
       const mins = Math.round(diff / 60000);
       const left = mins >= 60 ? Math.floor(mins / 60) + '시간 ' + (mins % 60) + '분' : mins + '분';
@@ -1032,7 +1033,7 @@ $('#btn-schedule').onclick = () => {
   $('#sd-text').value = $('#msg-input').value.trim();
   $('#sd-file').textContent = '';
   $('#sd-time').min = toLocalInput(new Date(Date.now() + 60 * 1000));
-  $('#sd-time').max = toLocalInput(new Date(Date.now() + SCHED_MAX_MS));
+  $('#sd-time').max = toLocalInput(new Date(Date.now() + schedMaxMs()));
   $('#sd-time').value = '';
   $('#sched-dialog').hidden = false;
   sdCheck();
@@ -1145,6 +1146,8 @@ async function enterMain() {
   openMain('friends');
   renderMe();
   $('#btn-admin').hidden = !me.is_admin;
+  refreshPlanState().catch(() => {});
+  handleBillingReturn();
   renderReceiptsBtn();
   renderVisBtns();
   await loadRequests();
@@ -2140,7 +2143,6 @@ async function renderProfileList() {
     li.appendChild(del);
     ul.appendChild(li);
   }
-  if (list.length >= 5) $('#pf-msg').textContent = '프로필은 최대 5개까지 만들 수 있습니다.';
 }
 
 async function uploadProfilePhoto(pid, file) {
@@ -2307,3 +2309,119 @@ async function openBots() {
 }
 $('#btn-bots').onclick = () => openBots();
 $('#bots-back').onclick = () => openMain('settings');
+
+// ===== 프리미엄 구독 (토스페이먼츠) =====
+let tossSdkPromise = null;
+function loadTossSdk() {
+  if (window.TossPayments) return Promise.resolve();
+  if (!tossSdkPromise) {
+    tossSdkPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://js.tosspayments.com/v1/payment';
+      s.onload = () => resolve();
+      s.onerror = () => {
+        tossSdkPromise = null;
+        reject(new Error('결제 모듈을 불러오지 못했습니다'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+  return tossSdkPromise;
+}
+
+async function refreshPlanState() {
+  const s = await api('/api/billing/status');
+  PREMIUM_ON = !!s.premium;
+  return s;
+}
+
+function fmtDay(v) {
+  return new Date(v).toLocaleDateString('ko-KR');
+}
+
+async function openPlan() {
+  $('#plan-msg').textContent = '';
+  showView('plan');
+  try {
+    const s = await refreshPlanState();
+    if (s.premium) {
+      $('#plan-state').textContent = '프리미엄 이용 중 · ' + fmtDay(s.period_end) + '까지' +
+        (s.status === 'canceled' ? ' (해지됨, 자동 결제 없음)' : ' (매월 자동 결제)');
+    } else if (s.status === 'past_due') {
+      $('#plan-state').textContent = '결제 실패로 구독이 중단되었습니다. 다시 구독해 주세요.';
+    } else {
+      $('#plan-state').textContent = '무료 플랜 이용 중';
+    }
+    $('#plan-price').textContent = '월 ' + Number(s.price).toLocaleString('ko-KR') + '원';
+    $('#plan-subscribe').hidden = !!s.premium;
+    $('#plan-cancel').hidden = !(s.premium && s.status === 'active');
+    const ul = $('#plan-payments');
+    ul.innerHTML = '';
+    if (!s.payments.length) {
+      const li = document.createElement('li');
+      li.textContent = '결제 내역이 없습니다';
+      ul.appendChild(li);
+    }
+    for (const p of s.payments) {
+      const li = document.createElement('li');
+      li.textContent = fmtDay(p.created_at) + ' · ' + Number(p.amount).toLocaleString('ko-KR') + '원 · ' +
+        (p.status === 'done' ? '결제 완료' : p.status);
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    $('#plan-msg').textContent = e.message;
+  }
+}
+
+async function subscribePlan() {
+  $('#plan-msg').textContent = '';
+  try {
+    const c = await api('/api/billing/config');
+    if (!c.clientKey) throw new Error('결제가 아직 준비되지 않았습니다. 잠시 후 다시 시도해 주세요');
+    await loadTossSdk();
+    const tp = window.TossPayments(c.clientKey);
+    // 결제창으로 이동 후 successUrl / failUrl 로 돌아옴
+    await tp.requestBillingAuth('카드', {
+      customerKey: c.customerKey,
+      successUrl: location.origin + '/?billing=success',
+      failUrl: location.origin + '/?billing=fail',
+      customerName: me.name,
+    });
+  } catch (e) {
+    $('#plan-msg').textContent = e.message;
+  }
+}
+
+async function cancelPlan() {
+  if (!confirm('구독을 해지할까요? 남은 기간까지는 계속 이용할 수 있고, 다음 자동 결제는 진행되지 않습니다.')) return;
+  try {
+    await api('/api/billing/cancel', { method: 'POST' });
+    await openPlan();
+  } catch (e) {
+    $('#plan-msg').textContent = e.message;
+  }
+}
+
+$('#btn-plan').onclick = () => openPlan();
+$('#plan-back').onclick = () => openMain('settings');
+$('#plan-subscribe').onclick = () => subscribePlan();
+$('#plan-cancel').onclick = () => cancelPlan();
+
+// 결제창에서 돌아온 경우 (?billing=success&authKey=...&customerKey=...)
+async function handleBillingReturn() {
+  const p = new URLSearchParams(location.search);
+  const b = p.get('billing');
+  if (!b) return;
+  history.replaceState(null, '', location.pathname);
+  if (b === 'fail') return alert('결제가 완료되지 않았습니다' + (p.get('message') ? ': ' + p.get('message') : ''));
+  try {
+    await api('/api/billing/issue', {
+      method: 'POST',
+      body: JSON.stringify({ authKey: p.get('authKey'), customerKey: p.get('customerKey') }),
+    });
+    alert('프리미엄 구독이 시작되었습니다.');
+    await openPlan();
+  } catch (e) {
+    alert(e.message);
+  }
+}
