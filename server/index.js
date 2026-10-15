@@ -453,6 +453,70 @@ app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- AI 어시스턴트 (Anthropic Claude API) ----
+// 주의: 이 대화는 종단간 암호화가 아니며 서버에 평문으로 저장되고 Anthropic으로 전송됩니다.
+// 환경변수 ANTHROPIC_API_KEY 가 없으면 기능이 꺼진 상태로 동작합니다. 모델은 AI_MODEL 로 바꿀 수 있음.
+const AI_MODEL = process.env.AI_MODEL || 'claude-haiku-5-5';
+const AI_SYSTEM = '당신은 메신저 앱 안의 AI 어시스턴트입니다. 한국어로 간결하고 정확하게 답하세요.';
+const aiHits = new Map(); // userId -> 최근 요청 시각들 (분당 10회 제한)
+function aiRateOk(uid) {
+  const now = Date.now();
+  const arr = (aiHits.get(uid) || []).filter((t) => now - t < 60000);
+  const ok = arr.length < 10;
+  if (ok) arr.push(now);
+  aiHits.set(uid, arr);
+  return ok;
+}
+
+app.get('/api/ai/messages', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, role, content, created_at FROM (SELECT * FROM ai_messages WHERE user_id=$1 ORDER BY id DESC LIMIT 100) t ORDER BY id',
+    [req.user.id]);
+  res.json(rows);
+}));
+
+app.delete('/api/ai/messages', auth, wrap(async (req, res) => {
+  await pool.query('DELETE FROM ai_messages WHERE user_id=$1', [req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.post('/api/ai/messages', auth, wrap(async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ error: 'AI 어시스턴트가 아직 설정되지 않았습니다' });
+  const text = String((req.body || {}).text || '').trim();
+  if (!text || text.length > 2000) return res.status(400).json({ error: '메시지는 1~2000자로 입력하세요' });
+  if (!aiRateOk(req.user.id)) return res.status(429).json({ error: '잠시 후 다시 시도해 주세요 (분당 10회 제한)' });
+
+  await pool.query("INSERT INTO ai_messages (user_id, role, content) VALUES ($1,'user',$2)", [req.user.id, text]);
+  const { rows } = await pool.query(
+    "SELECT role, content FROM (SELECT id, role, content FROM ai_messages WHERE user_id=$1 ORDER BY id DESC LIMIT 20) t ORDER BY id",
+    [req.user.id]);
+  const history = rows.map((m) => ({ role: m.role, content: m.content }));
+  while (history.length && history[0].role !== 'user') history.shift(); // 대화는 user 메시지로 시작해야 함
+
+  let reply;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 1024, system: AI_SYSTEM, messages: history }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error((j && j.error && j.error.message) || 'AI 응답 오류');
+    reply = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim() || '(응답이 비어 있습니다)';
+  } catch (e) {
+    console.error('AI 응답 실패:', e.message);
+    return res.status(502).json({ error: 'AI 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요' });
+  }
+  const ins = await pool.query(
+    "INSERT INTO ai_messages (user_id, role, content) VALUES ($1,'assistant',$2) RETURNING id, role, content, created_at",
+    [req.user.id, reply]);
+  res.json(ins.rows[0]);
+}));
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;

@@ -222,3 +222,13 @@ CREATE TABLE IF NOT EXISTS profile_assign (
   profile_id INT REFERENCES profiles(id) ON DELETE SET NULL,
   PRIMARY KEY (owner_id, viewer_id)
 );
+
+-- AI 어시스턴트 대화 (평문 저장, 종단간 암호화 아님)
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_messages_user ON ai_messages (user_id, id);

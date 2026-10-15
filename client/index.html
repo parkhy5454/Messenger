@@ -121,6 +121,22 @@
     </div>
   </div>
 
+  <!-- AI 어시스턴트 -->
+  <section id="view-ai" class="view" hidden>
+    <div class="card wide">
+      <h1>AI 어시스턴트</h1>
+      <p class="muted">AI와의 대화는 종단간 암호화되지 않으며, 서버에 저장되고 Anthropic 서비스로 전송됩니다. 개인정보나 민감한 내용은 입력하지 마세요.</p>
+      <div id="ai-box" class="ai-list"></div>
+      <form id="ai-form">
+        <input id="ai-input" maxlength="2000" placeholder="질문을 입력하세요" autocomplete="off" />
+        <button type="submit" class="primary">보내기</button>
+      </form>
+      <p id="ai-msg" class="msg-line"></p>
+      <button id="ai-clear" class="ghost" type="button">대화 지우기</button>
+      <button id="ai-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <!-- 멀티 프로필 관리 -->
   <section id="view-profiles" class="view" hidden>
     <div class="card">
@@ -265,6 +281,7 @@
       <ul class="setting-list">
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
         <li><button id="btn-profiles" class="ghost wide-btn" type="button">프로필 관리 (친구별 프로필)</button></li>
+        <li><button id="btn-ai" class="ghost wide-btn" type="button">AI 어시스턴트</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>

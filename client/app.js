@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -2200,3 +2200,64 @@ async function setFriendProfile(f, profileId) {
     alert(e.message);
   }
 }
+
+// ===== AI 어시스턴트 =====
+function renderAi(list) {
+  const box = $('#ai-box');
+  box.innerHTML = '';
+  if (!list.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = '무엇이든 물어보세요.';
+    box.append(p);
+  }
+  for (const m of list) {
+    const d = document.createElement('div');
+    d.className = 'ai-bubble ' + (m.role === 'user' ? 'me' : 'ai');
+    d.textContent = m.content;
+    box.append(d);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+async function openAi() {
+  $('#ai-msg').textContent = '';
+  showView('ai');
+  try {
+    renderAi(await api('/api/ai/messages'));
+  } catch (e) {
+    $('#ai-msg').textContent = e.message;
+  }
+}
+$('#btn-ai').onclick = () => openAi();
+$('#ai-back').onclick = () => openMain('settings');
+
+$('#ai-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const input = $('#ai-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  $('#ai-msg').textContent = 'AI가 답하는 중...';
+  try {
+    await api('/api/ai/messages', { method: 'POST', body: JSON.stringify({ text }) });
+    $('#ai-msg').textContent = '';
+  } catch (err) {
+    $('#ai-msg').textContent = err.message;
+  }
+  // 실패해도 사용자 메시지는 저장되므로 목록을 다시 불러와 맞춤
+  try {
+    renderAi(await api('/api/ai/messages'));
+  } catch (_) {}
+};
+
+$('#ai-clear').onclick = async () => {
+  if (!confirm('AI 대화 내용을 모두 지울까요?')) return;
+  try {
+    await api('/api/ai/messages', { method: 'DELETE' });
+    renderAi([]);
+    $('#ai-msg').textContent = '';
+  } catch (e) {
+    $('#ai-msg').textContent = e.message;
+  }
+};

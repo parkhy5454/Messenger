@@ -281,3 +281,11 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 /* 멀티 프로필 */
 #pf-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .small-btn { padding: 4px 10px; font-size: 13px; margin-left: 6px; }
+
+/* AI 어시스턴트 */
+.ai-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0; }
+.ai-bubble { max-width: 80%; padding: 8px 12px; border-radius: 12px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
+.ai-bubble.me { align-self: flex-end; background: #fee500; }
+.ai-bubble.ai { align-self: flex-start; background: #f1f1f1; }
+#ai-form { display: flex; gap: 8px; margin-top: 8px; }
+#ai-input { flex: 1; }
