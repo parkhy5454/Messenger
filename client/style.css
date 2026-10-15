@@ -295,9 +295,9 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .qrow label { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 
 /* 그룹 게시판 */
-#notice-banner { padding: 8px 12px; background: #fff8e1; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+#notice-banner { padding: 8px 12px; background: #fff8e1; color: #222; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
 #notice-banner[hidden] { display: none; }
-.notice-box { white-space: pre-wrap; background: #fff8e1; border-radius: 8px; padding: 10px; }
+.notice-box { white-space: pre-wrap; background: #fff8e1; color: #222; border-radius: 8px; padding: 10px; }
 #gb-notice-form, #gb-event-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 #gb-notice-form[hidden], #gb-event-form[hidden] { display: none; }
 #gb-events li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
