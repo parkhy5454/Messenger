@@ -316,6 +316,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .qr-login { text-align: center; margin: 12px 0; }
 .qr-login img { width: 200px; height: 200px; image-rendering: pixelated; background: #fff; border-radius: 8px; }
 .qr-code-line strong { font-size: 24px; letter-spacing: 4px; }
+.set-group { font-size: 13px; color: var(--sub); font-weight: 600; margin: 18px 4px 6px; }
 .consent { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-size: 14px; text-align: left; }
 .consent input { margin-top: 3px; }
 .consent-modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
