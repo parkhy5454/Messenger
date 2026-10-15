@@ -320,6 +320,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .consent-modal[hidden] { display: none; }
 .consent-box { max-width: 360px; width: 100%; padding: 20px; border-radius: 12px; background: Canvas; color: CanvasText; }
 .consent-box button { width: 100%; margin-top: 8px; }
+.withdraw-row { color: #e5484d; }
 .voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.6; } }
 

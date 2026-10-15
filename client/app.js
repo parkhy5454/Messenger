@@ -1802,6 +1802,20 @@ $('#consent-ok').onclick = async () => {
 };
 $('#consent-logout').onclick = () => logout();
 
+// 회원 탈퇴 (되돌릴 수 없음)
+$('#btn-withdraw').onclick = async () => {
+  if (!confirm('정말 탈퇴할까요?\n\n계정, 프로필, 친구 관계, 올린 파일이 삭제되며 되돌릴 수 없습니다.\n주고받은 메시지는 상대방 대화에 "탈퇴한 사용자"로 남습니다.')) return;
+  const pw = prompt('비밀번호를 입력하세요. 카카오로만 가입했다면 "탈퇴"를 입력하세요.');
+  if (pw === null) return;
+  try {
+    await api('/api/me/withdraw', { method: 'POST', body: JSON.stringify({ password: pw }) });
+    alert('탈퇴가 완료되었습니다. 이용해 주셔서 감사합니다.');
+    logout();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
 async function start() {
   try {
     me = await api('/api/me');

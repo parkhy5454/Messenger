@@ -399,6 +399,56 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 }));
 
 // ---- 사용자·친구 ----
+// 회원 탈퇴: 계정 행은 '탈퇴한 사용자'로 남겨 주고받은 메시지의 연결을 보존하고, 개인정보·파일·관계·기기 정보는 지웁니다.
+// 주고받은 메시지 내용은 상대방 대화에 그대로 남습니다 (기본 정책).
+app.post('/api/me/withdraw', auth, wrap(async (req, res) => {
+  const uid = req.user.id;
+  const b = req.body || {};
+  const { rows } = await pool.query('SELECT password_hash FROM users WHERE id=$1', [uid]);
+  const u = rows[0];
+  if (!u) return res.status(404).json({ error: '계정을 찾을 수 없습니다' });
+  if (u.password_hash) {
+    if (!(await bcrypt.compare(String(b.password || ''), u.password_hash))) return res.status(401).json({ error: '비밀번호가 맞지 않습니다' });
+  } else if (b.password !== '탈퇴') {
+    return res.status(400).json({ error: '"탈퇴"를 입력해 주세요' });
+  }
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query('UPDATE messages SET file_id = NULL WHERE file_id IN (SELECT id FROM files WHERE uploader_id=$1)', [uid]);
+    await c.query('DELETE FROM files WHERE uploader_id=$1', [uid]);
+    await c.query('DELETE FROM friendships WHERE user_id=$1 OR friend_id=$1', [uid]);
+    await c.query('DELETE FROM blocks WHERE blocker_id=$1 OR blocked_id=$1', [uid]);
+    await c.query('DELETE FROM group_members WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM group_keys WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM group_reads WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM chat_prefs WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM muted_chats WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM push_subs WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM ai_messages WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM scheduled_messages WHERE sender_id=$1', [uid]);
+    await c.query('DELETE FROM subscriptions WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM phone_codes WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM login_requests WHERE user_id=$1', [uid]);
+    await c.query('UPDATE sessions SET revoked=true WHERE user_id=$1', [uid]);
+    await c.query(
+      `UPDATE users SET username=$2, name='탈퇴한 사용자', email=NULL, password_hash=NULL, kakao_id=NULL,
+         email_verified=false, email_code=NULL, email_code_expires=NULL, status_msg='', totp_secret=NULL, totp_enabled=false,
+         phone_hash=NULL, phone_verified=false, phone_discoverable=false, discoverable=false, share_token=NULL,
+         avatar_file_id=NULL, show_photo=false, withdrawn_at=now()
+       WHERE id=$1`,
+      [uid, 'withdrawn_' + uid]
+    );
+    await c.query('COMMIT');
+  } catch (e) {
+    await c.query('ROLLBACK');
+    throw e;
+  } finally {
+    c.release();
+  }
+  res.json({ ok: true });
+}));
+
 // 다시 동의가 필요한지 알려 줍니다 (policy_ok = false 이면 클라이언트가 동의 창을 띄웁니다)
 app.post('/api/me/consent', auth, wrap(async (req, res) => {
   if (!consentOk(req.body)) return res.status(400).json({ error: '필수 약관에 동의해 주세요' });

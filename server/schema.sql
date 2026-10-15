@@ -351,3 +351,6 @@ CREATE TABLE IF NOT EXISTS login_requests (
 -- 약관 동의 기록 (정책 버전과 동의 시각)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_version TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_agreed_at TIMESTAMPTZ;
+
+-- 회원 탈퇴 시각 (탈퇴한 계정은 이름이 '탈퇴한 사용자'로 표시되고 로그인할 수 없음)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ;
