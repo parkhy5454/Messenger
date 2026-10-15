@@ -781,19 +781,52 @@ function deleteMsg(m) {
 
 // 전달: 텍스트 메시지만 (파일은 제외). 최근 대화 순서로 대화를 골라 보냅니다 (현재 대화는 제외)
 async function forwardMsg(m) {
-  if (m.file_id) return alert('파일은 전달할 수 없습니다. 텍스트 메시지만 전달할 수 있습니다.');
+  if (m.view_once) return alert('한 번만 보는 사진은 전달할 수 없습니다.');
   const targets = chats
     .filter((c) => !(current && c.type === current.type && c.id === current.id))
     .sort((a, b) => (b.last ? Date.parse(b.last.created_at) : 0) - (a.last ? Date.parse(a.last.created_at) : 0))
-    .slice(0, 50);
+    ;
   if (!targets.length) return alert('전달할 대화가 없습니다. 친구나 그룹 대화가 있어야 합니다.');
   openSheet(targets.map((c) => [(c.type === 'group' ? '👥 ' : '') + c.name, () => forwardTo(m, c)]));
+}
+// 파일 전달: 원본을 받아 (암호화였다면 풀고) 대상 대화의 키로 다시 암호화해 새 파일로 올립니다
+async function forwardFile(m) {
+  const r = await fetch('/api/files/' + m.file_id, { headers: { Authorization: 'Bearer ' + token } });
+  if (!r.ok) throw new Error('파일을 불러올 수 없습니다');
+  const name = m.file_name || 'file';
+  const mime = m.file_mime || r.headers.get('content-type') || 'application/octet-stream';
+  let plain;
+  if (m.enc) {
+    const k = await keyForMsg(m);
+    plain = new Uint8Array(await E2EE.openBytes(k, m.file_iv, await r.arrayBuffer()));
+  } else {
+    plain = new Uint8Array(await r.arrayBuffer());
+  }
+  if (plain.byteLength > 20 * 1024 * 1024) throw new Error('20MB 이하 파일만 보낼 수 있습니다');
+  const sk = await sendKey();
+  let body = plain, ctype = mime, fname = name, fileMeta = null;
+  if (sk) {
+    const sealed = await E2EE.sealBytes(sk.key, plain);
+    body = sealed.data;
+    ctype = 'application/octet-stream';
+    fname = 'encrypted';
+    fileMeta = { name, mime, iv: sealed.iv };
+  }
+  const up = await fetch('/api/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': ctype, 'X-File-Name': encodeURIComponent(fname) },
+    body,
+  });
+  const j = await up.json().catch(() => ({}));
+  if (!up.ok) throw new Error(j.error || '파일 전달에 실패했습니다');
+  await sendPayload({ fileId: j.id, text: m.text || '', fileMeta, sk });
 }
 async function forwardTo(m, target) {
   const prev = current;
   current = target;
   try {
-    await sendPayload({ text: m.text || '' });
+    if (m.file_id) await forwardFile(m);
+    else await sendPayload({ text: m.text || '' });
   } catch (err) {
     alert(err.message);
   } finally {
@@ -2642,22 +2675,29 @@ function renderReceiptsBtn() {
 }
 // 프로필 공개 설정 (상태 메시지, 온라인 표시, 마지막 접속)
 const VIS = [
-  ['btn-vis-photo', 'show_photo', 'showPhoto', '프로필 사진 공개'],
   ['btn-vis-status', 'show_status_msg', 'showStatus', '상태 메시지 공개'],
   ['btn-vis-online', 'show_online', 'showOnline', '온라인 표시'],
   ['btn-vis-seen', 'show_last_seen', 'showLastSeen', '마지막 접속 공개'],
 ];
+// 프로필 사진 공개 범위: 비공개 → 친구에게만 → 모든 사용자 (누를 때마다 다음 단계)
+const PHOTO_SCOPES = ['off', 'friends', 'all'];
+const PHOTO_LABEL = { off: '비공개', friends: '친구에게만', all: '모든 사용자' };
+function photoScope() { return me.photo_public ? 'all' : (me.show_photo ? 'friends' : 'off'); }
 function renderPublicBtn() {
-  $('#btn-vis-public').textContent = '모든 사용자에게 사진 공개: ' + (me.photo_public ? '켜짐' : '꺼짐');
+  $('#btn-vis-public').textContent = '프로필 사진 공개: ' + PHOTO_LABEL[photoScope()] + ' (누르면 다음 단계)';
 }
 $('#btn-vis-public').onclick = async () => {
-  const next = !me.photo_public;
-  if (next && !confirm('로그인한 모든 사용자가 내 프로필 사진을 볼 수 있습니다. 켤까요?')) return;
+  const next = PHOTO_SCOPES[(PHOTO_SCOPES.indexOf(photoScope()) + 1) % PHOTO_SCOPES.length];
+  if (next === 'all' && !confirm('로그인한 모든 사용자가 내 프로필 사진을 볼 수 있습니다. 설정할까요?')) return;
   try {
-    await api('/api/prefs/photo-public', { method: 'PUT', body: JSON.stringify({ on: next }) });
-    me.photo_public = next;
+    const wantPublic = next === 'all';
+    const wantFriends = next !== 'off';
+    await api('/api/prefs/photo-public', { method: 'PUT', body: JSON.stringify({ on: wantPublic }) });
+    await api('/api/prefs/profile', { method: 'POST', body: JSON.stringify({ showPhoto: wantFriends }) });
+    me.photo_public = wantPublic;
+    me.show_photo = wantFriends;
     avatarCache.clear();
-    renderPublicBtn();
+    renderVisBtns();
   } catch (err) {
     alert(err.message);
   }
