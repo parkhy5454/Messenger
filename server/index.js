@@ -298,6 +298,8 @@ app.post('/api/auth/reset', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (req
     [String(email || '').toLowerCase(), sha256(String(code || '')), hash]
   );
   if (!rows[0]) return res.status(400).json({ error: '코드가 틀렸거나 만료되었습니다' });
+  // 비밀번호를 재설정하면 모든 기기의 로그인을 끊음
+  await pool.query('UPDATE sessions SET revoked=true WHERE user_id=$1', [rows[0].id]);
   res.json({ ok: true });
 }));
 
@@ -317,6 +319,8 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
   } else {
     await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user.id, hash]);
   }
+  // 다른 기기의 로그인은 끊음 (이 기기는 유지)
+  await pool.query('UPDATE sessions SET revoked=true WHERE user_id=$1 AND id<>$2', [req.user.id, req.user.sid || 0]);
   res.json({ ok: true });
 }));
 
@@ -660,6 +664,17 @@ async function chargeDueSubscriptions() {
   }
 }
 
+// 더 이상 어디에도 쓰이지 않는 파일만 삭제 (메시지·프로필·예약 메시지에서 참조 중이면 유지)
+async function deleteOrphanFile(id) {
+  await pool.query(
+    `DELETE FROM files f WHERE f.id=$1
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.file_id=f.id)
+       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.avatar_file_id=f.id)
+       AND NOT EXISTS (SELECT 1 FROM profiles p WHERE p.avatar_file_id=f.id)
+       AND NOT EXISTS (SELECT 1 FROM scheduled_messages s WHERE s.file_id=f.id)`,
+    [id]).catch(() => {});
+}
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;
@@ -703,15 +718,18 @@ app.post('/api/profiles/:id/avatar', auth, wrap(async (req, res) => {
   const fileId = Number((req.body || {}).fileId);
   const f = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, req.user.id]);
   if (!f.rows[0] || !String(f.rows[0].mime).startsWith('image/')) return res.status(400).json({ error: '사진 파일을 선택하세요' });
+  const prev = await pool.query('SELECT avatar_file_id FROM profiles WHERE id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
   const r = await pool.query('UPDATE profiles SET avatar_file_id=$3 WHERE id=$1 AND user_id=$2',
     [Number(req.params.id), req.user.id, fileId]);
   if (!r.rowCount) return res.status(404).json({ error: '프로필을 찾을 수 없습니다' });
+  if (prev.rows[0] && prev.rows[0].avatar_file_id && prev.rows[0].avatar_file_id !== fileId) await deleteOrphanFile(prev.rows[0].avatar_file_id);
   res.json({ ok: true });
 }));
 
 app.delete('/api/profiles/:id', auth, wrap(async (req, res) => {
-  const r = await pool.query('DELETE FROM profiles WHERE id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
+  const r = await pool.query('DELETE FROM profiles WHERE id=$1 AND user_id=$2 RETURNING avatar_file_id', [Number(req.params.id), req.user.id]);
   if (!r.rowCount) return res.status(404).json({ error: '프로필을 찾을 수 없습니다' });
+  if (r.rows[0] && r.rows[0].avatar_file_id) await deleteOrphanFile(r.rows[0].avatar_file_id);
   res.json({ ok: true }); // 이 프로필을 쓰던 친구는 자동으로 기본 프로필로 돌아감 (ON DELETE SET NULL)
 }));
 
@@ -747,7 +765,11 @@ app.post('/api/me/avatar', auth, wrap(async (req, res) => {
   const fileId = Number((req.body || {}).fileId);
   const f = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, req.user.id]);
   if (!f.rows[0] || !String(f.rows[0].mime).startsWith('image/')) return res.status(400).json({ error: '사진 파일을 선택하세요' });
+  const prevAvatar = await pool.query('SELECT avatar_file_id FROM users WHERE id=$1', [req.user.id]);
   await pool.query('UPDATE users SET avatar_file_id=$2 WHERE id=$1', [req.user.id, fileId]);
+  if (prevAvatar.rows[0] && prevAvatar.rows[0].avatar_file_id && prevAvatar.rows[0].avatar_file_id !== fileId) {
+    await deleteOrphanFile(prevAvatar.rows[0].avatar_file_id);
+  }
   res.json({ ok: true });
 }));
 
@@ -902,6 +924,8 @@ app.post('/api/scheduled', auth, wrap(async (req, res) => {
   const text = String(b.text || '');
   const at = new Date(b.sendAt);
   if (!to || !text || text.length > 20000) return res.status(400).json({ error: '내용을 확인하세요' });
+  const botCheck = await pool.query('SELECT is_bot FROM users WHERE id=$1', [to]);
+  if (botCheck.rows[0] && botCheck.rows[0].is_bot) return res.status(400).json({ error: '봇에게는 예약 전송을 할 수 없습니다' });
   const maxDays = (await isPremium(req.user.id)) ? 90 : 30;
   if (isNaN(at) || at <= new Date() || at - new Date() > maxDays * 24 * 3600 * 1000) {
     return res.status(400).json({ error: `예약 시간은 지금부터 ${maxDays}일 이내여야 합니다` });
