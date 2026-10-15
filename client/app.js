@@ -3442,6 +3442,7 @@ async function openQuiet() {
   try {
     const q = await api('/api/prefs/quiet');
     $('#quiet-on').checked = !!q.on;
+    api('/api/prefs/preview').then((p) => { $('#preview-on').checked = !!p.show; }).catch(() => {});
     $('#quiet-from').value = q.from;
     $('#quiet-to').value = q.to;
   } catch (e) {
@@ -3847,5 +3848,15 @@ $('#gb-poll-form').onsubmit = async (e) => {
     await refreshBoard(current.id);
   } catch (err) {
     $('#gb-msg').textContent = err.message;
+  }
+};
+
+// 알림 미리보기 표시 설정 (바꾸면 바로 저장)
+$('#preview-on').onchange = async () => {
+  try {
+    await api('/api/prefs/preview', { method: 'PUT', body: JSON.stringify({ show: $('#preview-on').checked }) });
+    $('#quiet-msg').textContent = '저장했습니다.';
+  } catch (e) {
+    $('#quiet-msg').textContent = e.message;
   }
 };

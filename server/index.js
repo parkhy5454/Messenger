@@ -875,6 +875,17 @@ async function filterQuietAndMuted(ids, tag) {
   return keep;
 }
 
+// 알림 미리보기: 끄면 푸시 알림에 메시지 내용 대신 '새 메시지가 도착했습니다'만 보입니다
+app.get('/api/prefs/preview', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT push_preview FROM users WHERE id=$1', [req.user.id]);
+  res.json({ show: !!(rows[0] && rows[0].push_preview) });
+}));
+
+app.put('/api/prefs/preview', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE users SET push_preview=$2 WHERE id=$1', [req.user.id, !!(req.body || {}).show]);
+  res.json({ ok: true });
+}));
+
 app.get('/api/prefs/quiet', auth, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT quiet_on, quiet_from, quiet_to FROM users WHERE id=$1', [req.user.id]);
   const r = rows[0];
@@ -2528,6 +2539,7 @@ function previewText(kind, text) {
 }
 
 // 앱이 연결되어 있지 않은 사용자에게만 푸시를 보냅니다 (연결 중이면 소켓으로 이미 받음)
+// 푸시 알림에 메시지 내용을 보여 줄지 (끄면 payload.hiddenBody 또는 기본 문구만 보냅니다)
 async function notifyUsers(userIds, payload, exceptUserId) {
   let targets = [...new Set(userIds)].filter((id) => id !== exceptUserId && !io.sockets.adapter.rooms.get('user:' + id));
   if (!targets.length) return;
@@ -2535,12 +2547,14 @@ async function notifyUsers(userIds, payload, exceptUserId) {
   targets = await filterQuietAndMuted(targets, payload.tag);
   if (!targets.length) return;
   const { rows } = await pool.query(
-    'SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id = ANY($1::int[])',
+    'SELECT id, user_id, endpoint, p256dh, auth FROM push_subs WHERE user_id = ANY($1::int[])',
     [targets]
   );
-  const body = JSON.stringify(payload);
+  const hideIds = new Set((await pool.query('SELECT id FROM users WHERE id = ANY($1::int[]) AND push_preview = false', [targets])).rows.map((r) => r.id));
+  const fullBody = JSON.stringify(payload);
+  const hiddenBody = JSON.stringify({ ...payload, body: payload.hiddenBody || '새 메시지가 도착했습니다' });
   await Promise.all(rows.map((s) =>
-    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, { TTL: 3600 })
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, hideIds.has(s.user_id) ? hiddenBody : fullBody, { TTL: 3600 })
       .catch(async (e) => {
         if (e.statusCode === 404 || e.statusCode === 410) await pool.query('DELETE FROM push_subs WHERE id=$1', [s.id]);
         else console.error('푸시 발송 실패:', e.statusCode || e.message);

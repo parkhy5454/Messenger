@@ -362,3 +362,6 @@ CREATE TABLE IF NOT EXISTS chat_pins (
   target_id INT NOT NULL,
   PRIMARY KEY (user_id, kind, target_id)
 );
+
+-- 푸시 알림 미리보기 표시 여부 (기본 켜짐)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS push_preview BOOLEAN NOT NULL DEFAULT true;
