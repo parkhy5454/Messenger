@@ -51,25 +51,25 @@ async function setupKeys(password) {
   const local = await E2EE.loadLocal(me.id);
   const remote = await api('/api/e2ee/me');
   if (local && remote.pubkey === local.pub) {
-    myKey = { privKey: local.priv, pubB64: local.pub };
+    myKey = { privKey: local.priv, pubB64: local.pub, pkcs8: local.pkcs8 };
     return 'ready';
   }
   if (remote.pubkey) {
     if (!remote.enc_privkey) { myKey = null; return 'missing'; }
     if (!password) return 'locked';
-    let priv;
-    try { priv = await E2EE.unlockIdentity(password, remote.enc_privkey); }
+    let pkcs8;
+    try { pkcs8 = await E2EE.unlockPkcs8(password, remote.enc_privkey); }
     catch { throw new Error('비밀번호가 올바르지 않습니다'); }
-    await E2EE.saveLocal(me.id, priv, remote.pubkey);
-    myKey = { privKey: priv, pubB64: remote.pubkey };
+    await E2EE.saveLocal(me.id, pkcs8, remote.pubkey);
+    myKey = { privKey: await E2EE.importPrivate(pkcs8), pubB64: remote.pubkey, pkcs8 };
     peerKeys.clear();
     return 'ready';
   }
   // 서버에 키가 없으면 새로 만듭니다 (비밀번호가 없으면 서버 백업 없이 이 기기에만 저장)
   const id = await E2EE.createIdentity(password || null);
   await api('/api/e2ee/setup', { method: 'POST', body: JSON.stringify({ pubkey: id.pubB64, encPrivkey: id.blob }) });
-  await E2EE.saveLocal(me.id, id.privKey, id.pubB64);
-  myKey = { privKey: id.privKey, pubB64: id.pubB64 };
+  await E2EE.saveLocal(me.id, id.pkcs8, id.pubB64);
+  myKey = { privKey: id.privKey, pubB64: id.pubB64, pkcs8: id.pkcs8 };
   peerKeys.clear();
   return 'ready';
 }
@@ -209,6 +209,54 @@ $('#unlock-form').onsubmit = async (e) => {
   }
 };
 $('#unlock-logout').onclick = logout;
+$('#unlock-other').onclick = () => requestApproval().catch((err) => {
+  $('#unlock-msg').textContent = err.message;
+  $('#unlock-code').textContent = '';
+});
+
+// 새 기기: 이미 로그인된 다른 기기의 승인을 받아 개인키를 가져옵니다 (비밀번호 입력 없음)
+async function requestApproval() {
+  $('#unlock-msg').textContent = '';
+  const eph = await E2EE.genEphemeral();
+  const r = await api('/api/devices/request', { method: 'POST', body: JSON.stringify({ pubkey: eph.pubB64 }) });
+  $('#unlock-code').textContent = '확인 번호: ' + eph.code + ' (다른 기기에 같은 번호가 보이면 승인하세요)';
+  const remote = await api('/api/e2ee/me');
+  const until = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < until) {
+    await new Promise((res) => setTimeout(res, 2000));
+    const s = await api('/api/devices/request/' + r.id);
+    if (s.status === 'denied') throw new Error('다른 기기에서 승인이 거절되었습니다');
+    if (s.status === 'expired') break;
+    if (s.status === 'approved') {
+      const p = JSON.parse(s.payload);
+      if (p.pub !== remote.pubkey) throw new Error('키가 일치하지 않습니다. 다시 시도하세요');
+      const K = await E2EE.sharedKey(eph.privKey, p.pub);
+      const pkcs8 = E2EE.fromB64((await E2EE.open(K, p.ct)).pkcs8);
+      await E2EE.saveLocal(me.id, pkcs8, p.pub);
+      myKey = { privKey: await E2EE.importPrivate(pkcs8), pubB64: p.pub, pkcs8 };
+      peerKeys.clear();
+      $('#unlock-code').textContent = '';
+      return enterMain();
+    }
+  }
+  throw new Error('승인 시간이 지났습니다. 다시 시도하세요');
+}
+
+// 기존 기기: 새 기기 요청이 오면 확인 번호를 보여 주고 승인하거나 거절합니다
+async function approveDevice(req) {
+  if (!myKey || !myKey.pkcs8) {
+    return alert('이 기기에서는 새 기기를 승인할 수 없습니다. 비밀번호로 한 번 다시 로그인한 뒤 시도하세요.');
+  }
+  const code = await E2EE.codeOf(req.pubkey);
+  const ok = confirm('새 기기에서 로그인 요청이 왔습니다.\n\n새 기기에 표시된 확인 번호가 [' + code + '] 인지 확인하세요.\n\n본인이 로그인한 것이라면 승인하세요.');
+  if (!ok) return api('/api/devices/request/' + req.id + '/deny', { method: 'POST' });
+  const K = await E2EE.sharedKey(myKey.privKey, req.pubkey);
+  const ct = await E2EE.seal(K, { pkcs8: E2EE.toB64(myKey.pkcs8) });
+  await api('/api/devices/request/' + req.id + '/approve', {
+    method: 'POST',
+    body: JSON.stringify({ payload: JSON.stringify({ pub: myKey.pubB64, ct }) }),
+  });
+}
 
 function btn(label, fn, cls) {
   const b = document.createElement('button');
@@ -590,6 +638,7 @@ function connectSocket() {
   socket = io({ auth: { token } });
   socket.on('message:new', onMessage);
   socket.on('read:dm', onRead);
+  socket.on('device:request', (r) => approveDevice(r).catch((err) => alert(err.message)));
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
@@ -932,7 +981,7 @@ $('#attach').onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file || !current) return;
-  if (file.size > 2 * 1024 * 1024) return alert('2MB 이하 파일만 보낼 수 있습니다');
+  if (file.size > 20 * 1024 * 1024) return alert('20MB 이하 파일만 보낼 수 있습니다');
   try {
     let body = file, ctype = file.type || 'application/octet-stream', fname = file.name, fileMeta = null;
     const sk = await sendKey();

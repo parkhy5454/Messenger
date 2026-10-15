@@ -64,12 +64,16 @@ const E2EE = (() => {
     const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
     const blob = password ? await wrapPrivate(password, pkcs8) : null;
     const privKey = await importPrivate(pkcs8);
-    return { pubB64: toB64(pubSpki), blob, privKey };
+    return { pubB64: toB64(pubSpki), blob, privKey, pkcs8 };
   }
 
   // 서버에 저장된 감싼 개인키를 비밀번호로 풀어 사용할 수 있는 키로 만듭니다
   async function unlockIdentity(password, blob) {
     return importPrivate(await unwrapPrivate(password, blob));
+  }
+  // 잠금 해제 후 개인키 바이트(pkcs8)를 돌려줍니다 (기기 저장·승인 전달용)
+  async function unlockPkcs8(password, blob) {
+    return unwrapPrivate(password, blob);
   }
 
   // 비밀번호를 바꿀 때: 옛 비밀번호로 풀고 새 비밀번호로 다시 감쌉니다
@@ -123,16 +127,17 @@ const E2EE = (() => {
       r.onerror = () => rej(r.error);
     });
   }
-  async function saveLocal(userId, privKey, pubB64) {
+  // 저장 형식: { pkcs8(바이트), pub }
+  async function saveLocal(userId, pkcs8, pubB64) {
     const db = await openDb();
     return new Promise((res, rej) => {
       const tx = db.transaction('keys', 'readwrite');
-      tx.objectStore('keys').put({ priv: privKey, pub: pubB64 }, String(userId));
+      tx.objectStore('keys').put({ pkcs8, pub: pubB64 }, String(userId));
       tx.oncomplete = () => res();
       tx.onerror = () => rej(tx.error);
     });
   }
-  async function loadLocal(userId) {
+  async function loadLocalRaw(userId) {
     const db = await openDb();
     return new Promise((res, rej) => {
       const tx = db.transaction('keys', 'readonly');
@@ -169,10 +174,31 @@ const E2EE = (() => {
     });
   }
 
+  // 이 기기에서 쓸 키: { priv(CryptoKey), pub, pkcs8 }. 예전 형식(priv만 저장)도 읽습니다.
+  async function loadLocal(userId) {
+    const v = await loadLocalRaw(userId);
+    if (!v) return null;
+    if (v.pkcs8) return { priv: await importPrivate(v.pkcs8), pub: v.pub, pkcs8: v.pkcs8 };
+    return { priv: v.priv, pub: v.pub, pkcs8: null };
+  }
+
+  // 새 기기 승인용 임시 키 쌍 + 확인 번호(공개키 해시 4자리)
+  async function genEphemeral() {
+    const pair = await crypto.subtle.generateKey(ECDH, false, ['deriveKey']);
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey));
+    const pubB64 = toB64(spki);
+    return { privKey: pair.privateKey, pubB64, code: await codeOf(pubB64) };
+  }
+  async function codeOf(pubB64) {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', fromB64(pubB64)));
+    const n = ((d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3]) >>> 0;
+    return String(n % 10000).padStart(4, '0');
+  }
+
   return {
-    createIdentity, unlockIdentity, rewrap, sharedKey,
+    createIdentity, unlockIdentity, unlockPkcs8, importPrivate, rewrap, sharedKey,
     seal, open, sealBytes, openBytes,
-    saveLocal, loadLocal,
+    saveLocal, loadLocal, genEphemeral, codeOf,
     toB64, fromB64, genRaw, importRawKey, wrapRaw, unwrapRaw, saveKV, loadKV,
   };
 })();

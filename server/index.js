@@ -320,6 +320,48 @@ app.get('/api/users/:id/pubkey', auth, wrap(async (req, res) => {
   res.json({ pubkey: rows[0].pubkey });
 }));
 
+// ---- 기기 간 키 승인 (새 기기는 이미 로그인된 기기의 승인으로 개인키를 받음) ----
+app.post('/api/devices/request', auth, wrap(async (req, res) => {
+  const pubkey = String((req.body || {}).pubkey || '');
+  if (!pubkey || pubkey.length > 500) return res.status(400).json({ error: '잘못된 요청입니다' });
+  await pool.query("DELETE FROM device_requests WHERE expires_at < now() - interval '1 day'");
+  const { rows } = await pool.query(
+    "INSERT INTO device_requests (user_id, pubkey, expires_at) VALUES ($1,$2, now() + interval '5 minutes') RETURNING id",
+    [req.user.id, pubkey]);
+  io.to('user:' + req.user.id).emit('device:request', { id: rows[0].id, pubkey });
+  res.status(201).json({ id: rows[0].id });
+}));
+
+app.get('/api/devices/request/:id', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT status, payload, expires_at < now() AS expired FROM device_requests WHERE id=$1 AND user_id=$2',
+    [Number(req.params.id), req.user.id]);
+  const r = rows[0];
+  if (!r) return res.status(404).json({ error: '요청을 찾을 수 없습니다' });
+  if (r.status === 'pending' && r.expired) return res.json({ status: 'expired' });
+  if (r.status === 'approved') {
+    await pool.query("UPDATE device_requests SET status='done', payload=NULL WHERE id=$1", [Number(req.params.id)]);
+    return res.json({ status: 'approved', payload: r.payload });
+  }
+  res.json({ status: r.status });
+}));
+
+app.post('/api/devices/request/:id/approve', auth, wrap(async (req, res) => {
+  const payload = String((req.body || {}).payload || '');
+  if (!payload || payload.length > 4000) return res.status(400).json({ error: '잘못된 요청입니다' });
+  const r = await pool.query(
+    "UPDATE device_requests SET status='approved', payload=$3 WHERE id=$1 AND user_id=$2 AND status='pending' AND expires_at > now()",
+    [Number(req.params.id), req.user.id, payload]);
+  if (!r.rowCount) return res.status(409).json({ error: '승인할 수 없는 요청입니다 (만료되었거나 이미 처리됨)' });
+  res.json({ ok: true });
+}));
+
+app.post('/api/devices/request/:id/deny', auth, wrap(async (req, res) => {
+  await pool.query("UPDATE device_requests SET status='denied' WHERE id=$1 AND user_id=$2 AND status='pending'",
+    [Number(req.params.id), req.user.id]);
+  res.json({ ok: true });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
@@ -650,7 +692,7 @@ const INLINE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 app.post(
   '/api/files',
   auth,
-  express.raw({ type: () => true, limit: '2mb' }),
+  express.raw({ type: () => true, limit: '20mb' }),
   wrap(async (req, res) => {
     const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
     const name = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).slice(0, 200);

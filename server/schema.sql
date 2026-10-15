@@ -122,3 +122,13 @@ CREATE TABLE IF NOT EXISTS group_keys (
   wrapped TEXT NOT NULL,
   PRIMARY KEY (group_id, user_id, epoch)
 );
+
+-- 기기 간 키 승인: 새 기기 요청 (5분 후 만료, 승인 후 한 번만 전달)
+CREATE TABLE IF NOT EXISTS device_requests (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  pubkey TEXT NOT NULL,
+  payload TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMPTZ NOT NULL
+);
