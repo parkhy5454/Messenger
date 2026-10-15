@@ -54,6 +54,8 @@ input {
   background: var(--bg); color: var(--ink); font-size: 15px; outline: none;
 }
 input:focus { border-color: var(--ink); }
+/* 체크박스는 텍스트 입력 스타일(전체 너비, 패딩, 테두리)을 받지 않게 되돌림 */
+input[type="checkbox"] { -webkit-appearance: checkbox; appearance: auto; width: 18px; height: 18px; min-width: 18px; padding: 0; margin: 2px 0 0; border: none; border-radius: 0; flex: none; accent-color: #fee500; }
 button.primary {
   background: var(--yellow); color: var(--ink); border: none; border-radius: 10px;
   padding: 13px; font-weight: 700; font-size: 15px;
