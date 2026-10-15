@@ -3042,6 +3042,12 @@ async function renderBoard() {
     const span = document.createElement('span');
     span.textContent = when + ' · ' + text;
     li.appendChild(span);
+    const cal = document.createElement('button');
+    cal.type = 'button';
+    cal.className = 'ghost small-btn';
+    cal.textContent = '캘린더';
+    cal.onclick = () => downloadEventIcs(ev, text, current.name);
+    li.appendChild(cal);
     if (s.owner) {
       const del = document.createElement('button');
       del.type = 'button';
@@ -3061,6 +3067,23 @@ async function renderBoard() {
   }
 }
 
+// 일정을 캘린더 파일(.ics)로 내려받습니다. 열면 캘린더 앱에 등록됩니다 (시간은 1시간으로 잡음)
+function downloadEventIcs(ev, title, groupName) {
+  const start = new Date(ev.starts_at);
+  const ics = ICS.build({
+    uid: 'msg-' + current.id + '-' + ev.id + '@messenger',
+    title,
+    start,
+    end: new Date(start.getTime() + 60 * 60 * 1000),
+    desc: (groupName || '') + ' 일정',
+  });
+  const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'messenger-event-' + ev.id + '.ics'; // 파일명은 영문으로 (일정 제목은 캘린더 안에 들어 있음)
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
 async function openBoard() {
   if (!current || current.type !== 'group') return;
   $('#gb-msg').textContent = '';

@@ -1,5 +1,5 @@
-const CACHE = 'messenger-v37';
-const SHELL = ['/', '/index.html', '/style.css', '/e2ee.js', '/kakao.js', '/vendor/jszip.min.js', '/app.js', '/manifest.json', '/icon-192.png'];
+const CACHE = 'messenger-v38';
+const SHELL = ['/', '/index.html', '/style.css', '/e2ee.js', '/kakao.js', '/ics.js', '/vendor/jszip.min.js', '/app.js', '/manifest.json', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
