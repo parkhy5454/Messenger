@@ -115,7 +115,8 @@
       <p id="tfa-state" class="muted"></p>
       <button id="btn-2fa" class="ghost wide-btn" type="button"></button>
       <div id="tfa-setup" hidden>
-        <p class="muted">인증 앱(Google Authenticator 등)에 아래 키를 직접 입력하고, 표시되는 6자리 코드를 입력하세요.</p>
+        <p class="muted">인증 앱(Google Authenticator 등)으로 QR 코드를 스캔하거나 아래 키를 직접 입력한 뒤, 표시되는 6자리 코드를 입력하세요.</p>
+        <img id="tfa-qr" class="qr" alt="2단계 인증 QR 코드" />
         <p id="tfa-secret" class="code"></p>
         <form id="tfa-form">
           <input id="tfa-code" inputmode="numeric" maxlength="6" placeholder="인증 코드" required />

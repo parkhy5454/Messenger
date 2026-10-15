@@ -246,3 +246,5 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 
 .viewer { position: fixed; inset: 0; background: #000; display: flex; align-items: center; justify-content: center; z-index: 70; }
 .viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+.qr { width: 220px; max-width: 100%; display: block; margin: 8px auto; image-rendering: pixelated; }

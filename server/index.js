@@ -544,7 +544,12 @@ app.post('/api/invites/:token/join', auth, wrap(async (req, res) => {
 app.post('/api/2fa/setup', auth, wrap(async (req, res) => {
   const secret = require('crypto').randomBytes(20);
   await pool.query('UPDATE users SET totp_secret=$2, totp_enabled=false WHERE id=$1', [req.user.id, encSecret(secret)]);
-  res.json({ secret: b32encode(secret) });
+  // 인증 앱에서 스캔할 QR 코드 (otpauth 주소를 PNG 데이터 URL로)
+  const u = await pool.query('SELECT username FROM users WHERE id=$1', [req.user.id]);
+  const key = b32encode(secret);
+  const uri = 'otpauth://totp/' + encodeURIComponent('Messenger:' + u.rows[0].username) + '?secret=' + key + '&issuer=Messenger';
+  const qr = await require('qrcode').toDataURL(uri, { margin: 1, width: 220 });
+  res.json({ secret: key, qr });
 }));
 app.post('/api/2fa/enable', auth, wrap(async (req, res) => {
   const { rows } = await pool.query('SELECT totp_secret FROM users WHERE id=$1', [req.user.id]);

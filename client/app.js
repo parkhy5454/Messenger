@@ -915,6 +915,7 @@ $('#btn-2fa').onclick = async () => {
     } else {
       const r = await api('/api/2fa/setup', { method: 'POST' });
       $('#tfa-secret').textContent = r.secret;
+      $('#tfa-qr').src = r.qr;
       $('#tfa-setup').hidden = false;
     }
   } catch (err) {
