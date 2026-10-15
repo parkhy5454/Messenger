@@ -18,6 +18,8 @@ services:
         sync: false
       - key: KAKAO_REDIRECT_URI
         sync: false              # https://<서비스주소>.onrender.com/api/auth/kakao/callback
+      - key: RESEND_API_KEY
+        sync: false              # Resend API 키 (re_...). 있으면 메일은 이 키로 발송됩니다
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT

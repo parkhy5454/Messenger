@@ -28,17 +28,34 @@ const mailer = process.env.SMTP_HOST
     })
   : null;
 
+// 우선순위: RESEND_API_KEY(HTTPS 443 포트, 막히지 않음) > SMTP_HOST > 개발용 로그 출력
 async function sendCode(email, code) {
+  const subject = '[Messenger] 이메일 인증 코드';
+  const text = `인증 코드: ${code}\n10분 안에 입력해 주세요.`;
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+  if (process.env.RESEND_API_KEY) {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [email], subject, text }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) {
+      const detail = await r.text();
+      throw new Error(`Resend 발송 실패 ${r.status}: ${detail}`);
+    }
+    return;
+  }
+
   if (!mailer) {
     console.log(`[개발] ${email} 인증 코드: ${code}`);
     return;
   }
-  await mailer.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: email,
-    subject: '[Messenger] 이메일 인증 코드',
-    text: `인증 코드: ${code}\n10분 안에 입력해 주세요.`,
-  });
+  await mailer.sendMail({ from, to: email, subject, text });
 }
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -75,8 +92,23 @@ app.post('/api/auth/signup', wrap(async (req, res) => {
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: '비밀번호는 8자 이상이어야 합니다' });
   if (!name || !email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: '이름과 올바른 이메일을 입력하세요' });
 
+  const dup = await pool.query(
+    'SELECT 1 FROM users WHERE username=$1 OR email=$2 LIMIT 1',
+    [uname, email.toLowerCase()]
+  );
+  if (dup.rows.length) return res.status(409).json({ error: '이미 사용 중인 아이디 또는 이메일입니다' });
+
   const hash = await bcrypt.hash(password, 10);
   const code = String(crypto.randomInt(100000, 1000000));
+
+  // 메일이 성공적으로 나간 뒤에만 계정을 저장합니다 (실패 시 미인증 계정이 남지 않음)
+  try {
+    await sendCode(email, code);
+  } catch (e) {
+    console.error('인증 메일 발송 실패:', e.message);
+    return res.status(502).json({ error: '인증 메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요' });
+  }
+
   try {
     await pool.query(
       `INSERT INTO users (username, name, email, password_hash, email_verified, email_code, email_code_expires)
@@ -87,7 +119,6 @@ app.post('/api/auth/signup', wrap(async (req, res) => {
     if (e.code === '23505') return res.status(409).json({ error: '이미 사용 중인 아이디 또는 이메일입니다' });
     throw e;
   }
-  await sendCode(email, code);
   res.status(201).json({ ok: true });
 }));
 
