@@ -270,6 +270,34 @@ function btn(label, fn, cls) {
 
 // 이름 기반 색 아바타 (카카오톡처럼 사각 둥근 모서리)
 const AV_COLORS = ['#f28b82', '#fbbc04', '#34a853', '#4285f4', '#a142f4', '#00acc1', '#ff7043', '#8d6e63', '#5c6bc0', '#26a69a'];
+// 프로필 사진 (있으면 사진, 없으면 이름 글자 아바타). 사진은 인증 헤더로 받아서 blob 주소로 씁니다
+const avatarCache = new Map();
+async function avatarUrl(uid) {
+  if (!avatarCache.has(uid)) {
+    const r = await fetch('/api/users/' + uid + '/avatar', { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) return null;
+    avatarCache.set(uid, URL.createObjectURL(await r.blob()));
+  }
+  return avatarCache.get(uid);
+}
+function avatarNodeFor(uid, name, cls) {
+  const el = avatarEl(name, cls);
+  const info = !uid ? null : (uid === me.id ? me : friends.find((f) => f.id === uid));
+  if (info && info.has_photo) {
+    avatarUrl(uid).then((url) => {
+      if (!url) return;
+      el.textContent = '';
+      el.style.background = 'none';
+      const img = document.createElement('img');
+      img.className = 'av-img';
+      img.alt = '';
+      img.src = url;
+      el.appendChild(img);
+    }).catch(() => {});
+  }
+  return el;
+}
+
 function avatarEl(name, cls) {
   const s = String(name || '?').trim() || '?';
   let h = 0;
@@ -326,7 +354,7 @@ function renderMe() {
   $('#me-status').textContent = (me.status_msg ? me.status_msg : '@' + me.username);
   const av = $('#me-av');
   av.innerHTML = '';
-  av.appendChild(avatarEl(me.name, 'lg'));
+  av.appendChild(avatarNodeFor(me.id, me.name, 'lg'));
 }
 
 document.querySelectorAll('#tabbar button').forEach((b) => {
@@ -777,7 +805,7 @@ function renderFriends() {
   for (const f of friends) {
     if (q && !(f.name + f.username).toLowerCase().includes(q)) continue;
     const li = document.createElement('li');
-    li.appendChild(avatarEl(f.name));
+    li.appendChild(avatarNodeFor(f.id, f.name));
     const main = document.createElement('div');
     main.className = 'row-main';
     main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
@@ -868,7 +896,7 @@ $('#search').oninput = renderList;
 function chatItem(c) {
   const li = document.createElement('li');
   li.onclick = () => openChat({ type: c.type, id: c.id, name: c.name, username: c.username });
-  li.appendChild(avatarEl(c.name));
+  li.appendChild(avatarNodeFor(c.type === 'dm' ? c.id : null, c.name));
 
   const main = document.createElement('div');
   main.className = 'row-main';
@@ -1001,7 +1029,7 @@ function makeMsg(m, cont) {
   if (!mine) {
     const slot = document.createElement('div');
     slot.className = 'av-slot';
-    if (!cont) slot.appendChild(avatarEl(m.sender_name || (current ? current.name : '?'), 'sm'));
+    if (!cont) slot.appendChild(avatarNodeFor(m.sender_id, m.sender_name || (current ? current.name : '?'), 'sm'));
     row.appendChild(slot);
   }
 
@@ -1200,6 +1228,7 @@ function renderReceiptsBtn() {
 }
 // 프로필 공개 설정 (상태 메시지, 온라인 표시, 마지막 접속)
 const VIS = [
+  ['btn-vis-photo', 'show_photo', 'showPhoto', '프로필 사진 공개'],
   ['btn-vis-status', 'show_status_msg', 'showStatus', '상태 메시지 공개'],
   ['btn-vis-online', 'show_online', 'showOnline', '온라인 표시'],
   ['btn-vis-seen', 'show_last_seen', 'showLastSeen', '마지막 접속 공개'],
@@ -1219,6 +1248,41 @@ for (const v of VIS) {
     }
   };
 }
+
+// 프로필 사진 바꾸기: 가로·세로 256px 이하 JPEG로 줄여서 올립니다
+async function resizeImage(file) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(1, 256 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * s);
+  c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, 'image/jpeg', 0.9));
+}
+$('#btn-avatar').onclick = () => $('#avatar-input').click();
+$('#avatar-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const blob = await resizeImage(file);
+    const r = await fetch('/api/files', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'image/jpeg', 'X-File-Name': encodeURIComponent('profile.jpg') },
+      body: blob,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || '사진 업로드에 실패했습니다');
+    await api('/api/me/avatar', { method: 'POST', body: JSON.stringify({ fileId: j.id }) });
+    avatarCache.delete(me.id);
+    me.has_photo = true;
+    renderMe();
+    await loadList();
+    alert('프로필 사진을 바꿨습니다.');
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
 $('#btn-receipts').onclick = async () => {
   const next = !me.receipts_on;

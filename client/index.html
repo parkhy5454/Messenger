@@ -197,9 +197,8 @@
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-blocks" class="ghost wide-btn" type="button">차단 목록</button></li>
-        <li><button id="btn-vis-status" class="ghost wide-btn" type="button"></button></li>
-        <li><button id="btn-vis-online" class="ghost wide-btn" type="button"></button></li>
-        <li><button id="btn-vis-seen" class="ghost wide-btn" type="button"></button></li>
+        <li><button id="btn-avatar" class="ghost wide-btn" type="button">프로필 사진 바꾸기</button></li>
+        <li><button id="btn-vis-photo" class="ghost wide-btn" type="button"></button></li>
         <li><button id="btn-vis-status" class="ghost wide-btn" type="button"></button></li>
         <li><button id="btn-vis-online" class="ghost wide-btn" type="button"></button></li>
         <li><button id="btn-vis-seen" class="ghost wide-btn" type="button"></button></li>
@@ -246,6 +245,7 @@
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
+  <input id="avatar-input" type="file" accept="image/*" hidden />
   <script src="/e2ee.js"></script>
   <script src="/app.js"></script>
 </body>

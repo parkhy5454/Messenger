@@ -266,7 +266,7 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
@@ -386,7 +386,7 @@ app.post('/api/prefs/receipts', auth, wrap(async (req, res) => {
 // 프로필 공개 설정 (상태 메시지, 온라인 표시, 마지막 접속)
 app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
   const b = req.body || {};
-  const cols = { showStatus: 'show_status_msg', showOnline: 'show_online', showLastSeen: 'show_last_seen' };
+  const cols = { showStatus: 'show_status_msg', showOnline: 'show_online', showLastSeen: 'show_last_seen', showPhoto: 'show_photo' };
   const sets = [];
   const vals = [req.user.id];
   for (const k of Object.keys(cols)) {
@@ -394,6 +394,33 @@ app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
   }
   if (sets.length) await pool.query('UPDATE users SET ' + sets.join(', ') + ' WHERE id=$1', vals);
   res.json({ ok: true });
+}));
+
+// ---- 프로필 사진 ----
+// 내 사진 지정 (먼저 /api/files 로 올린 이미지 id)
+app.post('/api/me/avatar', auth, wrap(async (req, res) => {
+  const fileId = Number((req.body || {}).fileId);
+  const f = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, req.user.id]);
+  if (!f.rows[0] || !String(f.rows[0].mime).startsWith('image/')) return res.status(400).json({ error: '사진 파일을 선택하세요' });
+  await pool.query('UPDATE users SET avatar_file_id=$2 WHERE id=$1', [req.user.id, fileId]);
+  res.json({ ok: true });
+}));
+
+// 사진 보기: 본인, 또는 수락된 친구이면서 상대가 사진 공개를 켠 경우만
+app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const { rows } = await pool.query(
+    'SELECT u.avatar_file_id, u.show_photo, f.mime, f.data FROM users u LEFT JOIN files f ON f.id = u.avatar_file_id WHERE u.id=$1',
+    [id]);
+  const r = rows[0];
+  if (!r || !r.avatar_file_id) return res.status(404).end();
+  if (id !== req.user.id) {
+    const fr = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, id]);
+    if (!fr.rows[0] || !r.show_photo) return res.status(404).end();
+  }
+  res.set('Content-Type', r.mime);
+  res.set('Cache-Control', 'private, max-age=300');
+  res.send(r.data);
 }));
 
 app.get('/api/blocks', auth, wrap(async (req, res) => {
@@ -453,7 +480,7 @@ async function acceptFriend(requesterId, myId) {
 
 app.get('/api/friends', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.name, u.show_online, u.last_seen,
+    `SELECT u.id, u.username, u.name, u.show_online, u.last_seen, u.show_photo, u.avatar_file_id,
        (CASE WHEN u.show_status_msg THEN u.status_msg ELSE NULL END) AS status_msg,
        (CASE WHEN u.show_last_seen THEN u.last_seen ELSE NULL END) AS last_seen
      FROM friendships f
@@ -464,6 +491,7 @@ app.get('/api/friends', auth, wrap(async (req, res) => {
   // 온라인 표시: 공개 설정이 켜져 있고 지금 접속 중일 때만
   res.json(rows.map((r) => ({
     id: r.id, username: r.username, name: r.name, status_msg: r.status_msg, last_seen: r.last_seen,
+    has_photo: !!(r.show_photo && r.avatar_file_id),
     online: !!(r.show_online && io.sockets.adapter.rooms.get('user:' + r.id)),
   })));
 }));
