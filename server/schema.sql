@@ -107,3 +107,18 @@ CREATE TABLE IF NOT EXISTS app_settings (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS pubkey TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS enc_privkey TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS enc BOOLEAN NOT NULL DEFAULT false;
+
+-- 그룹 E2EE: 그룹 암호화 여부, 키 세대(epoch), 나간 사람이 생겨서 키 교체가 필요한지
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS enc BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS epoch INT NOT NULL DEFAULT 0;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS needs_rotate BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS key_epoch INT;
+-- 멤버별로 감싼 그룹 키: 보낸 사람(from_user)과의 공유 키로 감싸져 있습니다
+CREATE TABLE IF NOT EXISTS group_keys (
+  group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  epoch INT NOT NULL,
+  from_user INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wrapped TEXT NOT NULL,
+  PRIMARY KEY (group_id, user_id, epoch)
+);

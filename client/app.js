@@ -87,11 +87,88 @@ async function peerKey(peerId) {
 
 function peerOf(m) { return m.sender_id === me.id ? m.recipient_id : m.sender_id; }
 
+// ----- 그룹 키 -----
+// 세대(epoch)별 그룹 키를 이 기기에 저장합니다 (IndexedDB, 이름: g<그룹>:<세대>)
+const groupKeys = new Map(); // 'gid:epoch' -> CryptoKey
+async function groupRaw(gid, epoch) {
+  const b64 = await E2EE.loadKV('g' + gid + ':' + epoch);
+  return b64 ? E2EE.fromB64(b64) : null;
+}
+async function groupKey(gid, epoch) {
+  const id = gid + ':' + epoch;
+  if (!groupKeys.has(id)) {
+    const raw = await groupRaw(gid, epoch);
+    if (!raw) return null;
+    groupKeys.set(id, await E2EE.importRawKey(raw));
+  }
+  return groupKeys.get(id);
+}
+async function saveGroupRaw(gid, epoch, raw) {
+  await E2EE.saveKV('g' + gid + ':' + epoch, E2EE.toB64(raw));
+  groupKeys.delete(gid + ':' + epoch);
+}
+
+// 서버와 키를 맞춥니다: 받은 키 풀기, 필요하면 키 교체, 내가 가진 키를 키 없는 멤버에게 나눠주기
+async function syncGroupKeys(gid) {
+  let st = await api('/api/groups/' + gid + '/keys');
+  if (!st.enc) return st;
+  if (!myKey) throw new Error('이 기기에서 암호화 키를 찾을 수 없습니다');
+  const pub = new Map(st.members.map((m) => [m.id, m.pubkey]));
+  for (const row of st.keys) {
+    if (await groupRaw(gid, row.epoch)) continue;
+    const fromPub = pub.get(row.from_user);
+    if (!fromPub) continue;
+    const raw = await E2EE.unwrapRaw(await E2EE.sharedKey(myKey.privKey, fromPub), row.wrapped);
+    await saveGroupRaw(gid, row.epoch, raw);
+  }
+  if (st.needsRotate) {
+    const r = await api('/api/groups/' + gid + '/rotate', { method: 'POST' });
+    if (r.rotated) await saveGroupRaw(gid, r.epoch, E2EE.genRaw());
+    st = await api('/api/groups/' + gid + '/keys');
+  }
+  const have = new Set(st.have.map((h) => h.user_id + ':' + h.epoch));
+  const out = [];
+  for (const m of st.members) {
+    if (!m.pubkey) continue;
+    const shared = await E2EE.sharedKey(myKey.privKey, m.pubkey);
+    for (let e = 0; e <= st.epoch; e++) {
+      if (have.has(m.id + ':' + e)) continue;
+      const raw = await groupRaw(gid, e);
+      if (!raw) continue;
+      out.push({ userId: m.id, epoch: e, wrapped: E2EE.wrapRaw(shared, raw) });
+    }
+  }
+  for (const o of out) o.wrapped = await o.wrapped;
+  if (out.length) await api('/api/groups/' + gid + '/keys', { method: 'POST', body: JSON.stringify({ keys: out }) });
+  return st;
+}
+
+// 보낼 때 쓸 키: 1:1은 상대와의 공유 키, 암호화된 그룹은 현재 세대 키, 평문 그룹은 null
+async function sendKey() {
+  if (current.type === 'dm') return { key: await peerKey(current.id), epoch: null };
+  const st = await syncGroupKeys(current.id);
+  if (!st.enc) return null;
+  const key = await groupKey(current.id, st.epoch);
+  if (!key) throw new Error('그룹 암호화 키를 아직 받지 못했습니다. 잠시 후 다시 시도하세요');
+  return { key, epoch: st.epoch };
+}
+
+// 메시지를 풀 때 쓸 키 (그룹은 키가 없으면 한 번 동기화 후 다시 찾습니다)
+async function keyForMsg(m, peerId) {
+  if (m.group_id) {
+    let k = await groupKey(m.group_id, m.key_epoch);
+    if (!k) { await syncGroupKeys(m.group_id); k = await groupKey(m.group_id, m.key_epoch); }
+    if (!k) throw new Error('키 없음');
+    return k;
+  }
+  return peerKey(peerId || peerOf(m));
+}
+
 // 암호화된 1:1 메시지를 화면에 쓸 수 있는 모양(text, kind, file_*)으로 바꿉니다
 async function decryptMsg(m, peerId) {
   if (!m || !m.enc) return m;
   try {
-    const k = await peerKey(peerId || peerOf(m));
+    const k = await keyForMsg(m, peerId);
     const p = await E2EE.open(k, m.text);
     const f = p.f || null;
     return {
@@ -114,7 +191,7 @@ async function fileUrl(m) {
   if (!blobCache.has(key)) {
     const r = await fetch('/api/files/' + m.file_id, { headers: { Authorization: 'Bearer ' + token } });
     if (!r.ok) throw new Error('파일을 불러올 수 없습니다');
-    const k = await peerKey(peerOf(m));
+    const k = await keyForMsg(m);
     const plain = await E2EE.openBytes(k, m.file_iv, await r.arrayBuffer());
     blobCache.set(key, URL.createObjectURL(new Blob([plain], { type: m.file_mime || 'application/octet-stream' })));
   }
@@ -447,10 +524,26 @@ $('#gr-form').onsubmit = async (e) => {
   e.preventDefault();
   const ids = [...document.querySelectorAll('#gr-friends input:checked')].map((c) => Number(c.value));
   try {
-    await api('/api/groups', {
-      method: 'POST',
-      body: JSON.stringify({ name: $('#gr-name').value.trim(), memberIds: ids }),
-    });
+    const body = { name: $('#gr-name').value.trim(), memberIds: ids };
+    const pubs = await Promise.all([me.id, ...ids].map(async (uid) => {
+      if (uid === me.id) return { uid, pubkey: myKey ? myKey.pubB64 : null };
+      return { uid, pubkey: (await api('/api/users/' + uid + '/pubkey')).pubkey };
+    }));
+    if (myKey && pubs.every((p) => p.pubkey)) {
+      const raw = E2EE.genRaw();
+      body.enc = true;
+      body.keys = [];
+      for (const p of pubs) {
+        const shared = await E2EE.sharedKey(myKey.privKey, p.pubkey);
+        body.keys.push({ userId: p.uid, wrapped: await E2EE.wrapRaw(shared, raw) });
+      }
+      const created = await api('/api/groups', { method: 'POST', body: JSON.stringify(body) });
+      await saveGroupRaw(created.id, 0, raw);
+      $('#gr-msg').textContent = '';
+    } else {
+      await api('/api/groups', { method: 'POST', body: JSON.stringify(body) });
+      alert('일부 친구가 암호화 키를 아직 만들지 않아 일반 그룹으로 만들었습니다.');
+    }
     openMain('chats');
     await loadList();
   } catch (err) {
@@ -505,7 +598,7 @@ function connectSocket() {
 // 친구 목록과 대화 목록(마지막 메시지, 안 읽은 수)을 함께 불러옵니다
 async function loadList() {
   [friends, chats] = await Promise.all([api('/api/friends'), api('/api/chats')]);
-  for (const c of chats) if (c.last && c.last.enc) c.last = await decryptMsg(c.last, c.id);
+  for (const c of chats) if (c.last && c.last.enc) c.last = await decryptMsg({ ...c.last, group_id: c.type === 'group' ? c.id : null }, c.id);
   renderFriends();
   renderList();
 }
@@ -664,6 +757,7 @@ async function openChat(t) {
   $('#group-actions').hidden = t.type !== 'group';
   $('#compose').hidden = false;
   $('#chat-box').innerHTML = '';
+  if (t.type === 'group') await syncGroupKeys(t.id).catch(() => {});
   await loadMessages(true);
   if (t.type === 'dm') {
     socket.emit('read:dm', { userId: t.id });
@@ -813,12 +907,13 @@ function emitSend(payload) {
 // 1:1은 상대 키로 암호화해서 보내고, 그룹은 기존처럼 보냅니다
 async function sendPayload(extra) {
   try {
-    if (current.type === 'group') {
-      return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null });
-    }
-    const k = await peerKey(current.id);
-    const body = await E2EE.seal(k, { t: extra.text || '', f: extra.fileMeta || null });
-    emitSend({ to: current.id, text: body, fileId: extra.fileId || null, enc: true });
+    const sk = extra.sk || await sendKey();
+    if (!sk) return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null });
+    const body = await E2EE.seal(sk.key, { t: extra.text || '', f: extra.fileMeta || null });
+    const payload = { text: body, fileId: extra.fileId || null, enc: true };
+    if (current.type === 'group') Object.assign(payload, { groupId: current.id, epoch: sk.epoch });
+    else payload.to = current.id;
+    emitSend(payload);
   } catch (err) {
     alert(err.message);
   }
@@ -840,9 +935,9 @@ $('#attach').onchange = async (e) => {
   if (file.size > 2 * 1024 * 1024) return alert('2MB 이하 파일만 보낼 수 있습니다');
   try {
     let body = file, ctype = file.type || 'application/octet-stream', fname = file.name, fileMeta = null;
-    if (current.type === 'dm') {
-      const k = await peerKey(current.id);
-      const sealed = await E2EE.sealBytes(k, new Uint8Array(await file.arrayBuffer()));
+    const sk = await sendKey();
+    if (sk) {
+      const sealed = await E2EE.sealBytes(sk.key, new Uint8Array(await file.arrayBuffer()));
       body = sealed.data;
       ctype = 'application/octet-stream';
       fname = 'encrypted';
@@ -860,7 +955,7 @@ $('#attach').onchange = async (e) => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || '파일 업로드에 실패했습니다');
     const text = $('#msg-input').value.trim();
-    await sendPayload({ fileId: j.id, text, fileMeta });
+    await sendPayload({ fileId: j.id, text, fileMeta, sk });
     $('#msg-input').value = '';
   } catch (err) {
     alert(err.message);
@@ -934,6 +1029,7 @@ $('#btn-gadd').onclick = async () => {
   if (!f) return alert('친구 목록에서 찾을 수 없습니다. 친구만 초대할 수 있습니다.');
   try {
     await api('/api/groups/' + current.id + '/members', { method: 'POST', body: JSON.stringify({ userId: f.id }) });
+    await syncGroupKeys(current.id).catch(() => {});
     await loadList();
     alert(f.name + '님을 초대했습니다.');
   } catch (err) {

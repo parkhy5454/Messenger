@@ -402,7 +402,7 @@ app.get('/api/chats', auth, wrap(async (req, res) => {
      grp AS (
        SELECT 'group'::text AS type, g.id, g.name, ''::text AS username,
          (SELECT COUNT(*)::int FROM group_members x WHERE x.group_id = g.id) AS members,
-         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at, 'sender_name', su.name)
+         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at, 'sender_name', su.name, 'enc', m.enc, 'key_epoch', m.key_epoch, 'file_id', m.file_id)
             FROM messages m JOIN users su ON su.id = m.sender_id
             WHERE m.group_id = g.id ORDER BY m.id DESC LIMIT 1) AS last,
          0 AS unread
@@ -508,13 +508,28 @@ app.post('/api/groups', auth, wrap(async (req, res) => {
   const ids = [...new Set(friends.rows.map((r) => r.friend_id))].slice(0, 49);
   if (!ids.length) return res.status(400).json({ error: '그룹에 초대할 친구를 선택하세요' });
 
+  const wantEnc = !!(req.body || {}).enc;
+  const keyList = Array.isArray((req.body || {}).keys) ? req.body.keys : [];
+  const all = [req.user.id, ...ids];
+  if (wantEnc) {
+    const complete = all.every((uid) => keyList.some((k) => Number(k.userId) === uid && typeof k.wrapped === 'string' && k.wrapped.length > 0 && k.wrapped.length <= 4000));
+    if (!complete) return res.status(400).json({ error: '모든 멤버의 암호화 키가 필요합니다' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const g = await client.query('INSERT INTO groups (name, owner_id) VALUES ($1,$2) RETURNING id, name', [name, req.user.id]);
+    const g = await client.query('INSERT INTO groups (name, owner_id, enc) VALUES ($1,$2,$3) RETURNING id, name, enc', [name, req.user.id, wantEnc]);
     const groupId = g.rows[0].id;
-    for (const uid of [req.user.id, ...ids]) {
+    for (const uid of all) {
       await client.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2)', [groupId, uid]);
+    }
+    if (wantEnc) {
+      for (const k of keyList) {
+        const uid = Number(k.userId);
+        if (!all.includes(uid) || typeof k.wrapped !== 'string') continue;
+        await client.query('INSERT INTO group_keys (group_id, user_id, epoch, from_user, wrapped) VALUES ($1,$2,0,$3,$4)',
+          [groupId, uid, req.user.id, k.wrapped.slice(0, 4000)]);
+      }
     }
     await client.query('COMMIT');
     res.status(201).json(g.rows[0]);
@@ -554,8 +569,63 @@ app.post('/api/groups/:id/members', auth, wrap(async (req, res) => {
 }));
 
 // 그룹 나가기
+// 그룹 키 조회: 나에게 온 감싼 키, 멤버 공개키, 누가 어떤 세대 키를 가졌는지
+app.get('/api/groups/:id/keys', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const g = await pool.query('SELECT enc, epoch, needs_rotate FROM groups WHERE id=$1', [groupId]);
+  const members = await pool.query(
+    'SELECT u.id, u.name, u.pubkey FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id=$1', [groupId]);
+  const mine = await pool.query('SELECT epoch, from_user, wrapped FROM group_keys WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
+  const have = await pool.query('SELECT user_id, epoch FROM group_keys WHERE group_id=$1', [groupId]);
+  res.json({
+    enc: g.rows[0].enc, epoch: g.rows[0].epoch, needsRotate: g.rows[0].needs_rotate,
+    members: members.rows, keys: mine.rows, have: have.rows,
+  });
+}));
+
+// 감싼 그룹 키 저장: 보내는 사람은 본인이어야 하고, 받는 사람은 그룹 멤버여야 합니다
+app.post('/api/groups/:id/keys', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const list = Array.isArray((req.body || {}).keys) ? req.body.keys.slice(0, 500) : [];
+  const memberIds = new Set(await groupMemberIds(groupId));
+  const g = await pool.query('SELECT epoch FROM groups WHERE id=$1', [groupId]);
+  let saved = 0;
+  for (const k of list) {
+    const uid = Number(k.userId), epoch = Number(k.epoch), wrapped = String(k.wrapped || '');
+    if (!memberIds.has(uid) || !Number.isInteger(epoch) || epoch < 0 || epoch > g.rows[0].epoch) continue;
+    if (!wrapped || wrapped.length > 4000) continue;
+    await pool.query(
+      'INSERT INTO group_keys (group_id, user_id, epoch, from_user, wrapped) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+      [groupId, uid, epoch, req.user.id, wrapped]);
+    saved++;
+  }
+  res.json({ ok: true, saved });
+}));
+
+// 나간 멤버가 있으면 키 세대를 올립니다 (한 번만 올라감)
+app.post('/api/groups/:id/rotate', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const r = await pool.query(
+    'UPDATE groups SET epoch = epoch + 1, needs_rotate = false WHERE id=$1 AND needs_rotate = true RETURNING epoch', [groupId]);
+  if (r.rows[0]) return res.json({ epoch: r.rows[0].epoch, rotated: true });
+  const g = await pool.query('SELECT epoch FROM groups WHERE id=$1', [groupId]);
+  res.json({ epoch: g.rows[0].epoch, rotated: false });
+}));
+
+async function groupMemberIds(groupId) {
+  const { rows } = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [groupId]);
+  return rows.map((r) => r.user_id);
+}
+
 app.post('/api/groups/:id/leave', auth, wrap(async (req, res) => {
-  await pool.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
+  const groupId = Number(req.params.id);
+  await pool.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
+  await pool.query('DELETE FROM group_keys WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
+  // 암호화 그룹이면 다음 동기화 때 키를 새로 만들어서 나간 사람이 새 메시지를 못 읽게 합니다
+  await pool.query('UPDATE groups SET needs_rotate = true WHERE id=$1 AND enc = true', [groupId]);
   res.json({ ok: true });
 }));
 
@@ -564,7 +634,7 @@ app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
   if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at,
+    `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at, m.enc, m.key_epoch,
        (SELECT name FROM files WHERE id = m.file_id) AS file_name
      FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.group_id=$1 AND m.id < $2 ORDER BY m.id DESC LIMIT 50`,
@@ -680,7 +750,6 @@ io.on('connection', (socket) => {
       const enc = !!p.enc;
       if (!text && !fileId) return reply({ error: '메시지를 입력하세요' });
       if (text.length > (enc ? 20000 : 2000)) return reply({ error: '메시지는 2000자 이내로 입력하세요' });
-      if (enc && p.groupId) return reply({ error: '그룹 메시지는 암호화할 수 없습니다' });
 
       let kind = 'text';
       if (fileId) {
@@ -694,11 +763,17 @@ io.on('connection', (socket) => {
         // 그룹 메시지: 멤버 전원에게 전달
         const groupId = Number(p.groupId);
         if (!(await isGroupMember(groupId, me))) return reply({ error: '그룹 멤버가 아닙니다' });
+        const gr = await pool.query('SELECT enc, epoch FROM groups WHERE id=$1', [groupId]);
+        const gEnc = !!gr.rows[0].enc;
+        if (gEnc !== enc) return reply({ error: gEnc ? '암호화된 그룹입니다. 새로고침 후 다시 보내세요' : '일반 그룹 메시지입니다' });
+        // 키 세대가 바뀌었으면 클라이언트가 새 키로 다시 보내야 합니다
+        if (enc && Number(p.epoch) !== gr.rows[0].epoch) return reply({ error: 'KEY_STALE' });
+        const keyEpoch = enc ? gr.rows[0].epoch : null;
         const { rows } = await pool.query(
-          `INSERT INTO messages (sender_id, group_id, text, kind, file_id) VALUES ($1,$2,$3,$4,$5)
-           RETURNING id, sender_id, group_id, text, kind, file_id, created_at,
+          `INSERT INTO messages (sender_id, group_id, text, kind, file_id, enc, key_epoch) VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING id, sender_id, group_id, text, kind, file_id, created_at, enc, key_epoch,
              (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
-          [me, groupId, text, kind, fileId]
+          [me, groupId, text, kind, fileId, enc, keyEpoch]
         );
         const members = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [groupId]);
         const nm = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
@@ -708,7 +783,7 @@ io.on('connection', (socket) => {
         const gname = await pool.query('SELECT name FROM groups WHERE id=$1', [groupId]);
         notifyUsers(members.rows.map((r) => r.user_id), {
           title: gname.rows[0] ? gname.rows[0].name : '그룹',
-          body: msg.sender_name + ': ' + previewText(kind, text),
+          body: msg.sender_name + ': ' + (enc ? '새 메시지가 도착했습니다' : previewText(kind, text)),
           tag: 'group-' + groupId,
           url: '/',
         }, me).catch(() => {});

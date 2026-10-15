@@ -142,9 +142,37 @@ const E2EE = (() => {
     });
   }
 
+  // ----- 그룹 키 (세대별 랜덤 AES 키) -----
+  const genRaw = () => crypto.getRandomValues(new Uint8Array(32));
+  const importRawKey = (raw) => crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  // 그룹 키(raw)를 공유 키로 감싸서 문자열로 / 풀어서 raw로
+  const wrapRaw = (shared, raw) => seal(shared, { k: toB64(raw) });
+  async function unwrapRaw(shared, wrapped) { return fromB64((await open(shared, wrapped)).k); }
+
+  // 문자열 값을 이 기기에 저장 (그룹 키 등)
+  async function saveKV(name, value) {
+    const db = await openDb();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('keys', 'readwrite');
+      tx.objectStore('keys').put(value, name);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
+    });
+  }
+  async function loadKV(name) {
+    const db = await openDb();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('keys', 'readonly');
+      const rq = tx.objectStore('keys').get(name);
+      rq.onsuccess = () => res(rq.result === undefined ? null : rq.result);
+      rq.onerror = () => rej(rq.error);
+    });
+  }
+
   return {
     createIdentity, unlockIdentity, rewrap, sharedKey,
     seal, open, sealBytes, openBytes,
     saveLocal, loadLocal,
+    toB64, fromB64, genRaw, importRawKey, wrapRaw, unwrapRaw, saveKV, loadKV,
   };
 })();
