@@ -22,6 +22,20 @@
       .draft { background: #3a2f1a; border-color: #7a6130; }
       .muted { color: #aaa; }
     }
+    @media (max-width: 600px) {
+      table, tbody { display: block; width: 100%; }
+      table { border: none; margin: 8px 0 16px; }
+      tr:first-child { display: none; }
+      tr { display: block; border: 1px solid #ddd; border-radius: 10px; padding: 8px 12px; margin: 0 0 12px; background: #fff; }
+      td { display: block; border: none; padding: 4px 0; }
+      td::before { content: attr(data-label); display: block; font-size: 12px; color: #666; margin-bottom: 1px; }
+      td:first-child { font-size: 15px; font-weight: 700; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 4px; }
+      td:first-child::before { display: none; }
+    }
+    @media (max-width: 600px) and (prefers-color-scheme: dark) {
+      tr { background: #1e1e1e; border-color: #444; }
+      td:first-child { border-color: #444; }
+    }
   </style>
 </head>
 <body>
@@ -35,16 +49,16 @@
     <h2>1. 수집 항목과 보유 기간</h2>
     <table>
       <tr><th>구분</th><th>항목</th><th>수집 방법</th><th>보유 기간</th></tr>
-      <tr><td>회원가입</td><td>아이디, 이름, 이메일, 비밀번호(해시 저장)</td><td>가입 시 입력</td><td>탈퇴 시까지</td></tr>
-      <tr><td>카카오 로그인</td><td>카카오 계정 식별자, 이메일, 닉네임</td><td>카카오 연동</td><td>탈퇴 시까지</td></tr>
-      <tr><td>선택 정보</td><td>상태 메시지, 프로필 정보</td><td>이용자 입력</td><td>삭제 또는 탈퇴 시까지</td></tr>
-      <tr><td>프로필 사진</td><td>사진 파일(공개 범위: 수락한 친구 또는 모든 사용자, 이용자가 선택)</td><td>이용자 업로드</td><td>이용자가 지우거나 탈퇴 시까지</td></tr>
-      <tr><td>기기·접속 기록</td><td>기기 이름(브라우저와 OS 요약), 최근 접속 시각</td><td>자동 수집</td><td>로그아웃 또는 탈퇴 시까지 [확인 필요]</td></tr>
-      <tr><td>푸시 알림</td><td>푸시 구독 주소, 암호화 키</td><td>알림 허용 시 자동</td><td>구독 해제 또는 탈퇴 시까지</td></tr>
-      <tr><td>메시지·파일</td><td>대화 내용, 첨부 파일</td><td>이용자 입력</td><td>이용자가 삭제하거나 탈퇴 시까지 [확인 필요]</td></tr>
-      <tr><td>신고</td><td>신고자, 대상, 사유</td><td>신고 시 입력</td><td>처리 완료 후 [확인 필요]</td></tr>
-      <tr><td>휴대폰 인증 (현재 비활성)</td><td>전화번호 해시값, 인증 코드 해시값</td><td>인증 시 입력</td><td>인증 코드는 5분 후 만료, 번호 해시는 연결 해제 시까지</td></tr>
-      <tr><td>결제 (현재 보류)</td><td>주문 번호, 금액, 결제 상태, 빌링 키</td><td>결제 시</td><td>전자상거래법에 따라 5년 [확인 필요]</td></tr>
+      <tr><td data-label="구분">회원가입</td><td data-label="항목">아이디, 이름, 이메일, 비밀번호(해시 저장)</td><td data-label="수집 방법">가입 시 입력</td><td data-label="보유 기간">탈퇴 시까지</td></tr>
+      <tr><td data-label="구분">카카오 로그인</td><td data-label="항목">카카오 계정 식별자, 이메일, 닉네임</td><td data-label="수집 방법">카카오 연동</td><td data-label="보유 기간">탈퇴 시까지</td></tr>
+      <tr><td data-label="구분">선택 정보</td><td data-label="항목">상태 메시지, 프로필 정보</td><td data-label="수집 방법">이용자 입력</td><td data-label="보유 기간">삭제 또는 탈퇴 시까지</td></tr>
+      <tr><td data-label="구분">프로필 사진</td><td data-label="항목">사진 파일(공개 범위: 수락한 친구 또는 모든 사용자, 이용자가 선택)</td><td data-label="수집 방법">이용자 업로드</td><td data-label="보유 기간">이용자가 지우거나 탈퇴 시까지</td></tr>
+      <tr><td data-label="구분">기기·접속 기록</td><td data-label="항목">기기 이름(브라우저와 OS 요약), 최근 접속 시각</td><td data-label="수집 방법">자동 수집</td><td data-label="보유 기간">로그아웃 또는 탈퇴 시까지 [확인 필요]</td></tr>
+      <tr><td data-label="구분">푸시 알림</td><td data-label="항목">푸시 구독 주소, 암호화 키</td><td data-label="수집 방법">알림 허용 시 자동</td><td data-label="보유 기간">구독 해제 또는 탈퇴 시까지</td></tr>
+      <tr><td data-label="구분">메시지·파일</td><td data-label="항목">대화 내용, 첨부 파일</td><td data-label="수집 방법">이용자 입력</td><td data-label="보유 기간">이용자가 삭제하거나 탈퇴 시까지 [확인 필요]</td></tr>
+      <tr><td data-label="구분">신고</td><td data-label="항목">신고자, 대상, 사유</td><td data-label="수집 방법">신고 시 입력</td><td data-label="보유 기간">처리 완료 후 [확인 필요]</td></tr>
+      <tr><td data-label="구분">휴대폰 인증 (현재 비활성)</td><td data-label="항목">전화번호 해시값, 인증 코드 해시값</td><td data-label="수집 방법">인증 시 입력</td><td data-label="보유 기간">인증 코드는 5분 후 만료, 번호 해시는 연결 해제 시까지</td></tr>
+      <tr><td data-label="구분">결제 (현재 보류)</td><td data-label="항목">주문 번호, 금액, 결제 상태, 빌링 키</td><td data-label="수집 방법">결제 시</td><td data-label="보유 기간">전자상거래법에 따라 5년 [확인 필요]</td></tr>
     </table>
 
     <h2>2. 종단간 암호화 범위</h2>
@@ -53,12 +67,12 @@
     <h2>3. 처리 위탁과 제3자</h2>
     <table>
       <tr><th>수탁자</th><th>위탁 업무</th><th>비고</th></tr>
-      <tr><td>Render</td><td>앱 서버 호스팅</td><td>서버 위치 확인 후 국외 이전 여부 고지 [확인 필요]</td></tr>
-      <tr><td>Neon</td><td>데이터베이스</td><td>서버 위치 확인 [확인 필요]</td></tr>
-      <tr><td>Resend</td><td>인증 메일 발송</td><td>이메일 주소 전달</td></tr>
-      <tr><td>Anthropic</td><td>AI 기능(번역, 요약 등)</td><td>이용자가 요청한 메시지 내용이 전송됨. AI 기능이 켜진 경우에만 해당</td></tr>
-      <tr><td>토스페이먼츠</td><td>결제 처리</td><td>결제 기능 재개 시 적용</td></tr>
-      <tr><td>문자 발송 업체 (미정)</td><td>휴대폰 인증 문자</td><td>휴대폰 인증 활성화 시 적용</td></tr>
+      <tr><td data-label="수탁자">Render</td><td data-label="위탁 업무">앱 서버 호스팅</td><td data-label="비고">서버 위치 확인 후 국외 이전 여부 고지 [확인 필요]</td></tr>
+      <tr><td data-label="수탁자">Neon</td><td data-label="위탁 업무">데이터베이스</td><td data-label="비고">서버 위치 확인 [확인 필요]</td></tr>
+      <tr><td data-label="수탁자">Resend</td><td data-label="위탁 업무">인증 메일 발송</td><td data-label="비고">이메일 주소 전달</td></tr>
+      <tr><td data-label="수탁자">Anthropic</td><td data-label="위탁 업무">AI 기능(번역, 요약 등)</td><td data-label="비고">이용자가 요청한 메시지 내용이 전송됨. AI 기능이 켜진 경우에만 해당</td></tr>
+      <tr><td data-label="수탁자">토스페이먼츠</td><td data-label="위탁 업무">결제 처리</td><td data-label="비고">결제 기능 재개 시 적용</td></tr>
+      <tr><td data-label="수탁자">문자 발송 업체 (미정)</td><td data-label="위탁 업무">휴대폰 인증 문자</td><td data-label="비고">휴대폰 인증 활성화 시 적용</td></tr>
     </table>
 
     <h2>4. 이용자의 권리</h2>
