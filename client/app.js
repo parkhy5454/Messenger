@@ -2067,6 +2067,7 @@ async function openChat(t) {
   $('#notice-banner').hidden = true;
   renderMuteBtn();
   renderPinBtn();
+  $('#btn-gowner').hidden = true;
   if (t.type === 'group') refreshBoard(t.id).catch(() => {});
   if (t.type === 'group') socket.emit('call:status', { groupId: t.id }, (r) => {
     if (r && !r.error) {
@@ -2538,6 +2539,19 @@ $('#btn-gadd').onclick = async () => {
     await syncGroupKeys(current.id).catch(() => {});
     await loadList();
     alert(f.name + '님을 초대했습니다.');
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+$('#btn-gowner').onclick = async () => {
+  if (!current || current.type !== 'group') return;
+  const uname = prompt('새 방장으로 지정할 멤버의 아이디를 입력하세요. 넘기면 방장 권한은 되돌릴 수 없습니다.');
+  if (!uname) return;
+  try {
+    await api('/api/groups/' + current.id + '/owner', { method: 'PUT', body: JSON.stringify({ username: uname.trim() }) });
+    alert('방장을 넘겼습니다.');
+    await refreshBoard(current.id);
   } catch (err) {
     alert(err.message);
   }
@@ -3365,6 +3379,7 @@ async function renderBoard() {
   $('#gb-poll-q').placeholder = tpl.pollHint;
   // 방장이고 공지가 비어 있으면 목적 템플릿 문구를 넣을 수 있음
   $('#gb-tpl-btn').hidden = !(s.owner && !s.notice && tpl.notice);
+  $('#btn-gowner').hidden = !s.owner;
   $('#gb-notice').textContent = s.notice
     ? await openBoardText(gid, s.enc, s.notice_epoch, s.notice)
     : '등록된 공지가 없습니다';

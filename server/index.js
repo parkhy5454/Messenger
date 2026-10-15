@@ -419,6 +419,8 @@ app.post('/api/me/withdraw', auth, wrap(async (req, res) => {
     await c.query('DELETE FROM files WHERE uploader_id=$1', [uid]);
     await c.query('DELETE FROM friendships WHERE user_id=$1 OR friend_id=$1', [uid]);
     await c.query('DELETE FROM blocks WHERE blocker_id=$1 OR blocked_id=$1', [uid]);
+    const owned = await c.query('SELECT id FROM groups WHERE owner_id=$1', [uid]);
+    for (const g of owned.rows) await handOverGroup(c, g.id, uid);
     await c.query('DELETE FROM group_members WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM group_keys WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM group_reads WHERE user_id=$1', [uid]);
@@ -1818,6 +1820,13 @@ app.get('/api/unread', auth, wrap(async (req, res) => {
 }));
 
 // ---- 그룹 채팅 ----
+// 방장이 그룹을 떠날 때: 남은 멤버 중 가장 먼저 들어온(id가 가장 작은) 사람에게 넘깁니다. 남은 멤버가 없으면 그룹을 지웁니다.
+async function handOverGroup(q, groupId, leaverId) {
+  const next = await q.query('SELECT user_id FROM group_members WHERE group_id=$1 AND user_id<>$2 ORDER BY user_id LIMIT 1', [groupId, leaverId]);
+  if (next.rows[0]) await q.query('UPDATE groups SET owner_id=$2 WHERE id=$1', [groupId, next.rows[0].user_id]);
+  else await q.query('DELETE FROM groups WHERE id=$1', [groupId]);
+}
+
 async function isGroupMember(groupId, userId) {
   const { rows } = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, userId]);
   return rows.length > 0;
@@ -1948,8 +1957,26 @@ async function groupMemberIds(groupId) {
   return rows.map((r) => r.user_id);
 }
 
+// 방장 넘기기: 현재 방장만, 그룹 멤버의 아이디로 지정합니다
+app.put('/api/groups/:id/owner', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const { rows } = await pool.query('SELECT owner_id FROM groups WHERE id=$1', [gid]);
+  if (!rows[0]) return res.status(404).json({ error: '그룹을 찾을 수 없습니다' });
+  if (rows[0].owner_id !== req.user.id) return res.status(403).json({ error: '방장만 넘길 수 있습니다' });
+  const uname = String((req.body || {}).username || '').trim().toLowerCase();
+  const t = await pool.query(
+    'SELECT u.id FROM users u JOIN group_members gm ON gm.user_id = u.id WHERE gm.group_id=$1 AND u.username=$2 AND u.withdrawn_at IS NULL',
+    [gid, uname]);
+  if (!t.rows[0]) return res.status(400).json({ error: '그룹 멤버 중에서 아이디를 입력하세요' });
+  if (t.rows[0].id === req.user.id) return res.status(400).json({ error: '본인에게는 넘길 수 없습니다' });
+  await pool.query('UPDATE groups SET owner_id=$2 WHERE id=$1', [gid, t.rows[0].id]);
+  res.json({ ok: true });
+}));
+
 app.post('/api/groups/:id/leave', auth, wrap(async (req, res) => {
   const groupId = Number(req.params.id);
+  const own = await pool.query('SELECT owner_id FROM groups WHERE id=$1', [groupId]);
+  if (own.rows[0] && own.rows[0].owner_id === req.user.id) await handOverGroup(pool, groupId, req.user.id);
   await pool.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
   await pool.query('DELETE FROM group_keys WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
   // 암호화 그룹이면 다음 동기화 때 키를 새로 만들어서 나간 사람이 새 메시지를 못 읽게 합니다
