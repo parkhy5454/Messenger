@@ -316,6 +316,20 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .qr-login { text-align: center; margin: 12px 0; }
 .qr-login img { width: 200px; height: 200px; image-rendering: pixelated; background: #fff; border-radius: 8px; }
 .qr-code-line strong { font-size: 24px; letter-spacing: 4px; }
+/* 설정 화면: 묶음 카드 + 색깔 아이콘 */
+#tab-settings { background: color-mix(in srgb, var(--bg) 88%, var(--ink)); overflow-y: auto; padding-bottom: 24px; }
+#tab-settings .me-card { flex-direction: column; text-align: center; gap: 8px; margin: 12px 12px 4px; padding: 22px 16px; background: var(--bg); border-radius: 12px; }
+#tab-settings .me-card #me-av .av { width: 88px; height: 88px; border-radius: 50%; font-size: 36px; }
+#tab-settings .me-card .me-name { font-size: 20px; }
+#tab-settings .me-card .me-sub { font-size: 14px; }
+#tab-settings .set-group { margin: 18px 20px 6px; color: var(--sub); font-size: 13px; font-weight: 500; }
+#tab-settings .setting-list { background: var(--bg); border-radius: 12px; overflow: hidden; margin: 0 12px; }
+#tab-settings .setting-list li + li button { border-top: 1px solid var(--line); }
+#tab-settings .setting-list li button { display: flex; align-items: center; gap: 12px; border: none; border-radius: 0; padding: 11px 14px; font-size: 16px; background: var(--bg); }
+#tab-settings .setting-list li button[data-ic]::before { content: attr(data-ic); flex: 0 0 30px; width: 30px; height: 30px; border-radius: 8px; background: var(--c); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; }
+#tab-settings .setting-list li button:not(.logout-row):not(.withdraw-row)::after { content: "›"; margin-left: auto; color: var(--sub); font-size: 22px; line-height: 1; }
+#tab-settings .setting-list li button.withdraw-row { color: #ff3b30; }
+#tab-settings .setting-list li button.logout-row { color: #ff3b30; justify-content: center; }
 .set-group { font-size: 13px; color: var(--sub); font-weight: 600; margin: 18px 4px 6px; }
 .consent { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; font-size: 14px; text-align: left; }
 .consent input { margin-top: 3px; }
