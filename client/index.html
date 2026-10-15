@@ -68,6 +68,7 @@
       </form>
       <form id="reset-form" hidden>
         <p class="muted">메일로 받은 6자리 코드와 새 비밀번호를 입력하세요.</p>
+      <p class="muted warn">주의: 비밀번호를 재설정하면 이전 1:1 암호화 대화는 복구할 수 없습니다.</p>
         <input id="rs-code" inputmode="numeric" maxlength="6" placeholder="인증 코드" required />
         <input id="rs-pass" type="password" placeholder="새 비밀번호 (8자 이상)" autocomplete="new-password" required />
         <button type="submit" class="primary">비밀번호 변경</button>
@@ -138,6 +139,20 @@
       <h2>사용자</h2>
       <ul id="admin-users" class="plain"></ul>
       <button id="admin-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
+  <!-- 암호화 키 잠금 해제 (새 기기에서 한 번) -->
+  <section id="view-unlock" class="view" hidden>
+    <div class="card">
+      <h1>대화 잠금 해제</h1>
+      <p class="muted">이 기기에서 대화를 보내고 읽으려면 비밀번호를 한 번 입력하세요.</p>
+      <form id="unlock-form">
+        <input id="ul-pass" type="password" placeholder="비밀번호" autocomplete="current-password" required />
+        <button type="submit" class="primary">확인</button>
+      </form>
+      <button id="unlock-logout" class="link" type="button">로그아웃</button>
+      <p id="unlock-msg" class="msg-line"></p>
     </div>
   </section>
 
@@ -218,6 +233,7 @@
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="/e2ee.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

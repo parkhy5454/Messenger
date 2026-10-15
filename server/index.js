@@ -235,7 +235,7 @@ app.post('/api/auth/reset', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (req
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: '비밀번호는 8자 이상이어야 합니다' });
   const hash = await bcrypt.hash(password, 10);
   const { rows } = await pool.query(
-    `UPDATE users SET password_hash=$3, email_code=NULL
+    `UPDATE users SET password_hash=$3, email_code=NULL, pubkey=NULL, enc_privkey=NULL
      WHERE email=$1 AND email_code=$2 AND email_code_expires > now()
      RETURNING id`,
     [String(email || '').toLowerCase(), sha256(String(code || '')), hash]
@@ -254,7 +254,12 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
     return res.status(401).json({ error: '현재 비밀번호가 틀렸습니다' });
   }
   const hash = await bcrypt.hash(next, 10);
-  await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user.id, hash]);
+  const encPrivkey = typeof (req.body || {}).encPrivkey === 'string' ? req.body.encPrivkey : null;
+  if (encPrivkey) {
+    await pool.query('UPDATE users SET password_hash=$2, enc_privkey=$3 WHERE id=$1', [req.user.id, hash, encPrivkey]);
+  } else {
+    await pool.query('UPDATE users SET password_hash=$2 WHERE id=$1', [req.user.id, hash]);
+  }
   res.json({ ok: true });
 }));
 
@@ -280,7 +285,42 @@ app.patch('/api/me', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// 차단 목록 / 차단 해제
+x
+// ---- E2EE (1:1 종단간 암호화) 공개키 / 감싼 개인키 ----
+app.get('/api/e2ee/me', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT pubkey, enc_privkey FROM users WHERE id=$1', [req.user.id]);
+  if (!rows[0]) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+  res.json({ pubkey: rows[0].pubkey, enc_privkey: rows[0].enc_privkey });
+}));
+
+// 최초 키 생성 시에만 저장 (이미 있으면 덮어쓰지 않음)
+app.post('/api/e2ee/setup', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const pubkey = String(b.pubkey || '');
+  const encPrivkey = b.encPrivkey ? String(b.encPrivkey) : null;
+  if (!pubkey || pubkey.length > 500) return res.status(400).json({ error: '잘못된 공개키입니다' });
+  if (encPrivkey && encPrivkey.length > 4000) return res.status(400).json({ error: '잘못된 키 데이터입니다' });
+  const r = await pool.query(
+    'UPDATE users SET pubkey=$2, enc_privkey=$3 WHERE id=$1 AND pubkey IS NULL',
+    [req.user.id, pubkey, encPrivkey]
+  );
+  if (!r.rowCount) return res.status(409).json({ error: '이미 암호화 키가 설정되어 있습니다' });
+  res.json({ ok: true });
+}));
+
+// 상대의 공개키 (본인 또는 수락된 친구만)
+app.get('/api/users/:id/pubkey', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (id !== req.user.id) {
+    const f = await pool.query(
+      "SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, id]);
+    if (!f.rows[0]) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+  }
+  const { rows } = await pool.query('SELECT pubkey FROM users WHERE id=$1', [id]);
+  if (!rows[0]) return res.status(404).json({ error: '사용자를 찾을 수 없습니다' });
+  res.json({ pubkey: rows[0].pubkey });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
@@ -351,7 +391,7 @@ app.get('/api/chats', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `WITH dm AS (
        SELECT 'dm'::text AS type, f.friend_id AS id, u.name, u.username, 0 AS members,
-         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at)
+         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'enc', m.enc, 'file_id', m.file_id, 'created_at', m.created_at)
             FROM messages m
             WHERE (m.sender_id=$1 AND m.recipient_id=f.friend_id) OR (m.sender_id=f.friend_id AND m.recipient_id=$1)
             ORDER BY m.id DESC LIMIT 1) AS last,
@@ -431,7 +471,7 @@ app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const me = req.user.id;
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at,
+    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc,
        (SELECT name FROM files WHERE id = messages.file_id) AS file_name
      FROM messages
      WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
@@ -535,7 +575,7 @@ app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
 }));
 
 // ---- 파일 업로드 / 다운로드 (DB 저장, 최대 2MB) ----
-const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain', 'application/octet-stream'];
 const INLINE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
 app.post(
@@ -638,14 +678,17 @@ io.on('connection', (socket) => {
       const p = payload || {};
       const text = String(p.text || '').trim();
       const fileId = p.fileId ? Number(p.fileId) : null;
+      const enc = !!p.enc;
       if (!text && !fileId) return reply({ error: '메시지를 입력하세요' });
-      if (text.length > 2000) return reply({ error: '메시지는 2000자 이내로 입력하세요' });
+      if (text.length > (enc ? 20000 : 2000)) return reply({ error: '메시지는 2000자 이내로 입력하세요' });
+      if (enc && p.groupId) return reply({ error: '그룹 메시지는 암호화할 수 없습니다' });
 
       let kind = 'text';
       if (fileId) {
         const fr = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, me]);
         if (!fr.rows[0]) return reply({ error: '파일을 찾을 수 없습니다' });
-        kind = INLINE_MIME.includes(fr.rows[0].mime) ? 'image' : 'file';
+        // 암호화된 파일은 서버가 종류를 알 수 없으므로 'file'로 저장 (실제 종류는 클라이언트가 복호화 후 판단)
+        kind = enc ? 'file' : (INLINE_MIME.includes(fr.rows[0].mime) ? 'image' : 'file');
       }
 
       if (p.groupId) {
@@ -684,17 +727,17 @@ io.on('connection', (socket) => {
       if (!f.rows[0]) return reply({ error: '친구에게만 메시지를 보낼 수 있습니다' });
 
       const { rows } = await pool.query(
-        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id) VALUES ($1,$2,$3,$4,$5)
-         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at,
+        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc) VALUES ($1,$2,$3,$4,$5,$6)
+         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc,
            (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
-        [me, to, text, kind, fileId]
+        [me, to, text, kind, fileId, enc]
       );
       io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
       // 1:1 푸시 알림
       const sn = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
       notifyUsers([to], {
         title: sn.rows[0] ? sn.rows[0].name : '새 메시지',
-        body: previewText(kind, text),
+        body: enc ? '새 메시지가 도착했습니다' : previewText(kind, text),
         tag: 'dm-' + me,
         url: '/',
       }, me).catch(() => {});

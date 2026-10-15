@@ -3,6 +3,7 @@ let token = localStorage.getItem('token');
 let me = null, socket = null, current = null, oldestId = null, chatMsgs = [];
 let pendingEmail = '', resetEmail = '';
 let friends = [], chats = [];
+let pendingPassword = null;
 let activeTab = 'friends';
 const blobCache = new Map();
 
@@ -15,7 +16,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -38,6 +39,99 @@ async function loadBlob(id) {
   }
   return blobCache.get(id);
 }
+
+// ---------- 종단간 암호화 (1:1 대화) ----------
+// 내 키는 이 기기의 IndexedDB에 저장하고, 서버에는 비밀번호로 감싼 개인키만 둡니다.
+const INLINE_IMG = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+let myKey = null;            // { privKey, pubB64 }
+const peerKeys = new Map();  // 상대 id -> 공유 AES 키
+
+// 반환: 'ready' | 'locked'(비밀번호 입력 필요) | 'missing'(이 기기에 키 없음)
+async function setupKeys(password) {
+  const local = await E2EE.loadLocal(me.id);
+  const remote = await api('/api/e2ee/me');
+  if (local && remote.pubkey === local.pub) {
+    myKey = { privKey: local.priv, pubB64: local.pub };
+    return 'ready';
+  }
+  if (remote.pubkey) {
+    if (!remote.enc_privkey) { myKey = null; return 'missing'; }
+    if (!password) return 'locked';
+    let priv;
+    try { priv = await E2EE.unlockIdentity(password, remote.enc_privkey); }
+    catch { throw new Error('비밀번호가 올바르지 않습니다'); }
+    await E2EE.saveLocal(me.id, priv, remote.pubkey);
+    myKey = { privKey: priv, pubB64: remote.pubkey };
+    peerKeys.clear();
+    return 'ready';
+  }
+  // 서버에 키가 없으면 새로 만듭니다 (비밀번호가 없으면 서버 백업 없이 이 기기에만 저장)
+  const id = await E2EE.createIdentity(password || null);
+  await api('/api/e2ee/setup', { method: 'POST', body: JSON.stringify({ pubkey: id.pubB64, encPrivkey: id.blob }) });
+  await E2EE.saveLocal(me.id, id.privKey, id.pubB64);
+  myKey = { privKey: id.privKey, pubB64: id.pubB64 };
+  peerKeys.clear();
+  return 'ready';
+}
+
+// 상대와의 공유 키 (공개키를 받아 한 번 만들고 캐시)
+async function peerKey(peerId) {
+  if (!myKey) throw new Error('이 기기에서 암호화 키를 찾을 수 없습니다. 처음 설정한 기기에서 사용하세요');
+  if (!peerKeys.has(peerId)) {
+    const { pubkey } = await api('/api/users/' + peerId + '/pubkey');
+    if (!pubkey) throw new Error('상대방이 아직 암호화 키를 만들지 않았습니다. 상대가 한 번 로그인하면 보낼 수 있습니다');
+    peerKeys.set(peerId, await E2EE.sharedKey(myKey.privKey, pubkey));
+  }
+  return peerKeys.get(peerId);
+}
+
+function peerOf(m) { return m.sender_id === me.id ? m.recipient_id : m.sender_id; }
+
+// 암호화된 1:1 메시지를 화면에 쓸 수 있는 모양(text, kind, file_*)으로 바꿉니다
+async function decryptMsg(m, peerId) {
+  if (!m || !m.enc) return m;
+  try {
+    const k = await peerKey(peerId || peerOf(m));
+    const p = await E2EE.open(k, m.text);
+    const f = p.f || null;
+    return {
+      ...m,
+      text: p.t || '',
+      kind: f ? (INLINE_IMG.includes(f.mime) ? 'image' : 'file') : 'text',
+      file_name: f ? f.name : null,
+      file_mime: f ? f.mime : null,
+      file_iv: f ? f.iv : null,
+    };
+  } catch {
+    return { ...m, text: '[복호화할 수 없는 메시지]', kind: 'text', file_id: null };
+  }
+}
+
+// 첨부 파일: 암호화된 1:1 파일은 받아서 복호화한 뒤 blob 주소로 씁니다
+async function fileUrl(m) {
+  if (!m.enc) return loadBlob(m.file_id);
+  const key = 'enc' + m.file_id;
+  if (!blobCache.has(key)) {
+    const r = await fetch('/api/files/' + m.file_id, { headers: { Authorization: 'Bearer ' + token } });
+    if (!r.ok) throw new Error('파일을 불러올 수 없습니다');
+    const k = await peerKey(peerOf(m));
+    const plain = await E2EE.openBytes(k, m.file_iv, await r.arrayBuffer());
+    blobCache.set(key, URL.createObjectURL(new Blob([plain], { type: m.file_mime || 'application/octet-stream' })));
+  }
+  return blobCache.get(key);
+}
+
+$('#unlock-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await setupKeys($('#ul-pass').value);
+    $('#ul-pass').value = '';
+    await enterMain();
+  } catch (err) {
+    $('#unlock-msg').textContent = err.message;
+  }
+};
+$('#unlock-logout').onclick = logout;
 
 function btn(label, fn, cls) {
   const b = document.createElement('button');
@@ -142,6 +236,7 @@ $('#login-form').onsubmit = async (e) => {
     });
     token = r.token;
     localStorage.setItem('token', token);
+    pendingPassword = $('#li-pass').value;
     await start();
   } catch (err) {
     $('#auth-msg').textContent = err.message;
@@ -231,9 +326,17 @@ $('#pw-back').onclick = () => openMain('settings');
 $('#pw-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
+    const cur = $('#pw-cur').value, next = $('#pw-new').value;
+    const ek = await api('/api/e2ee/me');
+    let encPrivkey;
+    if (ek.enc_privkey) {
+      encPrivkey = await E2EE.rewrap(cur, ek.enc_privkey, next).catch(() => {
+        throw new Error('현재 비밀번호가 올바르지 않습니다');
+      });
+    }
     await api('/api/me/password', {
       method: 'POST',
-      body: JSON.stringify({ current: $('#pw-cur').value, next: $('#pw-new').value }),
+      body: JSON.stringify({ current: cur, next, encPrivkey }),
     });
     $('#pw-msg').textContent = '비밀번호가 변경되었습니다.';
     $('#pw-cur').value = '';
@@ -363,6 +466,23 @@ async function start() {
     if (err.message.includes('제한')) alert(err.message);
     return logout();
   }
+  const pw = pendingPassword;
+  pendingPassword = null;
+  try {
+    const st = await setupKeys(pw);
+    if (st === 'locked') {
+      $('#ul-pass').value = '';
+      $('#unlock-msg').textContent = '';
+      showView('unlock');
+      return;
+    }
+  } catch (err) {
+    alert(err.message);
+  }
+  await enterMain();
+}
+
+async function enterMain() {
   openMain('friends');
   renderMe();
   $('#btn-admin').hidden = !me.is_admin;
@@ -385,6 +505,7 @@ function connectSocket() {
 // 친구 목록과 대화 목록(마지막 메시지, 안 읽은 수)을 함께 불러옵니다
 async function loadList() {
   [friends, chats] = await Promise.all([api('/api/friends'), api('/api/chats')]);
+  for (const c of chats) if (c.last && c.last.enc) c.last = await decryptMsg(c.last, c.id);
   renderFriends();
   renderList();
 }
@@ -560,7 +681,7 @@ function historyPath(t, before) {
 
 // 처음에는 최근 메시지, "더 보기"는 이전 메시지를 위에 붙입니다
 async function loadMessages(initial) {
-  const rows = await api(historyPath(current, oldestId));
+  const rows = await Promise.all((await api(historyPath(current, oldestId))).map((m) => decryptMsg(m)));
   if (rows.length) oldestId = rows[0].id;
   $('#more').hidden = rows.length < 50;
   chatMsgs = initial ? rows : rows.concat(chatMsgs);
@@ -639,7 +760,7 @@ function makeMsg(m, cont) {
     const img = document.createElement('img');
     img.className = 'thumb';
     img.alt = '사진';
-    loadBlob(m.file_id).then((url) => { img.src = url; }).catch(() => { img.alt = '[이미지를 불러올 수 없음]'; });
+    fileUrl(m).then((url) => { img.src = url; }).catch(() => { img.alt = '[이미지를 불러올 수 없음]'; });
     bubble.appendChild(img);
   } else if (m.kind === 'file' && m.file_id) {
     const a = document.createElement('a');
@@ -648,7 +769,7 @@ function makeMsg(m, cont) {
     a.onclick = async (e) => {
       e.preventDefault();
       try {
-        const url = await loadBlob(m.file_id);
+        const url = await fileUrl(m);
         const d = document.createElement('a');
         d.href = url;
         d.download = m.file_name || 'file';
@@ -683,11 +804,24 @@ function makeMsg(m, cont) {
   return row;
 }
 
-function sendPayload(extra) {
-  const payload = current.type === 'group' ? { groupId: current.id, ...extra } : { to: current.id, ...extra };
+function emitSend(payload) {
   socket.emit('message:send', payload, (res) => {
     if (res && res.error) alert(res.error);
   });
+}
+
+// 1:1은 상대 키로 암호화해서 보내고, 그룹은 기존처럼 보냅니다
+async function sendPayload(extra) {
+  try {
+    if (current.type === 'group') {
+      return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null });
+    }
+    const k = await peerKey(current.id);
+    const body = await E2EE.seal(k, { t: extra.text || '', f: extra.fileMeta || null });
+    emitSend({ to: current.id, text: body, fileId: extra.fileId || null, enc: true });
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 $('#compose').onsubmit = (e) => {
@@ -698,26 +832,35 @@ $('#compose').onsubmit = (e) => {
   $('#msg-input').value = '';
 };
 
-// 파일 보내기 (2MB 이하, 이미지 / PDF / 텍스트)
+// 파일 보내기 (2MB 이하, 이미지 / PDF / 텍스트). 1:1은 파일도 암호화해서 올립니다.
 $('#attach').onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file || !current) return;
   if (file.size > 2 * 1024 * 1024) return alert('2MB 이하 파일만 보낼 수 있습니다');
   try {
+    let body = file, ctype = file.type || 'application/octet-stream', fname = file.name, fileMeta = null;
+    if (current.type === 'dm') {
+      const k = await peerKey(current.id);
+      const sealed = await E2EE.sealBytes(k, new Uint8Array(await file.arrayBuffer()));
+      body = sealed.data;
+      ctype = 'application/octet-stream';
+      fname = 'encrypted';
+      fileMeta = { name: file.name, mime: file.type || 'application/octet-stream', iv: sealed.iv };
+    }
     const r = await fetch('/api/files', {
       method: 'POST',
       headers: {
         Authorization: 'Bearer ' + token,
-        'Content-Type': file.type || 'application/octet-stream',
-        'X-File-Name': encodeURIComponent(file.name),
+        'Content-Type': ctype,
+        'X-File-Name': encodeURIComponent(fname),
       },
-      body: file,
+      body,
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || '파일 업로드에 실패했습니다');
     const text = $('#msg-input').value.trim();
-    sendPayload({ fileId: j.id, text });
+    await sendPayload({ fileId: j.id, text, fileMeta });
     $('#msg-input').value = '';
   } catch (err) {
     alert(err.message);
@@ -725,7 +868,8 @@ $('#attach').onchange = async (e) => {
 };
 
 // 새 메시지 수신: 열린 대화면 말풍선 추가, 아니면 대화 목록과 뱃지 갱신
-function onMessage(m) {
+async function onMessage(raw) {
+  const m = await decryptMsg(raw);
   const isGroupMsg = !!m.group_id;
   const relevant = current && (isGroupMsg
     ? current.type === 'group' && current.id === m.group_id

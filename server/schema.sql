@@ -102,3 +102,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- 종단간 암호화: 공개키, 비밀번호로 감싼 개인키, 메시지 암호화 여부
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pubkey TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS enc_privkey TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS enc BOOLEAN NOT NULL DEFAULT false;
