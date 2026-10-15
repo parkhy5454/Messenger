@@ -569,6 +569,7 @@ $('#btn-admin').onclick = loadAdmin;
 $('#admin-back').onclick = () => openMain('settings');
 async function loadAdmin() {
   showView('admin');
+  loadStats().catch(() => {});
   const [reports, users] = await Promise.all([api('/api/admin/reports'), api('/api/admin/users')]);
   const rl = $('#admin-reports');
   rl.innerHTML = '';
@@ -2007,3 +2008,55 @@ $('#call-cam').onclick = () => {
   t.enabled = !t.enabled;
   $('#call-cam').textContent = t.enabled ? '카메라 끄기' : '카메라 켜기';
 };
+
+// ===== 상태 대시보드 (관리자) =====
+function fmtBytes(n) {
+  let v = Number(n) || 0;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return v.toFixed(i ? 1 : 0) + ' ' + units[i];
+}
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return (d ? d + '일 ' : '') + h + '시간 ' + m + '분';
+}
+async function loadStats() {
+  const box = $('#admin-stats');
+  if (!box || $('#view-admin').hidden) return;
+  const s = await api('/api/admin/stats');
+  const cards = [
+    ['지금 접속', s.online_sockets + '개 연결'],
+    ['진행 중 통화', s.call_rooms + '방 · ' + s.call_participants + '명'],
+    ['전체 사용자', s.users.total + '명 (인증 ' + s.users.verified + ' · 정지 ' + s.users.banned + ')'],
+    ['신규 가입', '오늘 ' + s.users.new_1d + ' · 7일 ' + s.users.new_7d],
+    ['활성 사용자', '24시간 ' + s.users.active_1d + ' · 7일 ' + s.users.active_7d],
+    ['메시지', '전체 ' + s.messages.total + ' · 오늘 ' + s.messages.last_1d + ' · 7일 ' + s.messages.last_7d],
+    ['그룹 메시지', s.messages.group_msgs + '건'],
+    ['그룹 · 예약 메시지', s.misc.groups + '개 · ' + s.misc.scheduled + '건'],
+    ['파일', s.misc.files + '개 · ' + fmtBytes(s.misc.file_bytes)],
+    ['DB 사용량', fmtBytes(s.db_bytes)],
+    ['신고 건수', s.misc.reports + '건'],
+    ['활성 세션', s.misc.sessions + '개'],
+    ['서버 가동', fmtUptime(s.uptime_s) + ' · 메모리 ' + fmtBytes(s.rss)],
+  ];
+  box.innerHTML = '';
+  for (const [k, v] of cards) {
+    const d = document.createElement('div');
+    d.className = 'stat';
+    const label = document.createElement('span');
+    label.className = 'stat-k';
+    label.textContent = k;
+    const val = document.createElement('b');
+    val.textContent = v;
+    d.append(label, val);
+    box.append(d);
+  }
+}
+$('#stats-refresh').onclick = () => loadStats().catch((e) => alert(e.message));
+setInterval(() => loadStats().catch(() => {}), 15000);

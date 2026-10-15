@@ -271,3 +271,9 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #call-end { background: #ea4335; color: #fff; }
 #call-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: #e8f5e9; font-size: 14px; }
 #call-banner[hidden] { display: none; }
+
+/* 상태 대시보드 */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 8px 0 16px; }
+.stat { background: #f5f5f5; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.stat-k { font-size: 12px; color: #666; }
+.stat b { font-size: 14px; word-break: keep-all; }

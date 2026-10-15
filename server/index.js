@@ -1035,6 +1035,46 @@ app.post('/api/admin/reports/:id/resolve', auth, adminOnly, wrap(async (req, res
   res.json({ ok: true });
 }));
 
+// 상태 대시보드 (관리자 전용): 사용자·메시지·파일·통화·서버 상태 요약
+app.get('/api/admin/stats', auth, adminOnly, wrap(async (req, res) => {
+  const one = async (sql) => (await pool.query(sql)).rows[0];
+  const [users, messages, misc, db] = await Promise.all([
+    one(`SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE email_verified)::int AS verified,
+           COUNT(*) FILTER (WHERE banned)::int AS banned,
+           COUNT(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS new_1d,
+           COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS new_7d,
+           COUNT(*) FILTER (WHERE last_seen > now() - interval '1 day')::int AS active_1d,
+           COUNT(*) FILTER (WHERE last_seen > now() - interval '7 days')::int AS active_7d
+         FROM users`),
+    one(`SELECT COUNT(*)::int AS total,
+           COUNT(*) FILTER (WHERE created_at > now() - interval '1 day')::int AS last_1d,
+           COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS last_7d,
+           COUNT(*) FILTER (WHERE group_id IS NOT NULL)::int AS group_msgs
+         FROM messages`),
+    one(`SELECT (SELECT COUNT(*)::int FROM groups) AS groups,
+           (SELECT COUNT(*)::int FROM files) AS files,
+           (SELECT COALESCE(SUM(size), 0)::bigint FROM files) AS file_bytes,
+           (SELECT COUNT(*)::int FROM reports) AS reports,
+           (SELECT COUNT(*)::int FROM scheduled_messages) AS scheduled,
+           (SELECT COUNT(*)::int FROM sessions WHERE revoked = false) AS sessions`),
+    one(`SELECT pg_database_size(current_database())::bigint AS bytes`),
+  ]);
+  let participants = 0;
+  for (const room of calls.values()) participants += room.size;
+  res.json({
+    users,
+    messages,
+    misc,
+    db_bytes: Number(db.bytes),
+    online_sockets: io.sockets.sockets.size,
+    call_rooms: calls.size,
+    call_participants: participants,
+    uptime_s: Math.floor(process.uptime()),
+    rss: process.memoryUsage().rss,
+  });
+}));
+
 app.get('/api/admin/users', auth, adminOnly, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, username, name, email, email_verified, banned, created_at FROM users ORDER BY id DESC LIMIT 200`
