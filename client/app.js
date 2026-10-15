@@ -2130,6 +2130,44 @@ $('#msg-search-prev').onclick = () => stepMsgHit(-1);
 $('#msg-search-next').onclick = () => stepMsgHit(1);
 $('#msg-search-close').onclick = closeMsgSearch;
 
+// ===== 암호화 포함 전체 검색: 이 대화의 모든 메시지를 기기에서 복호화해 찾습니다 =====
+let deepLoadedKey = null; // 전체 기록을 불러온 대화 (종류:id)
+async function loadAllHistory() {
+  const t = current;
+  if (!t) return;
+  const key = t.type + ':' + t.id;
+  if (deepLoadedKey === key) return runMsgSearch();
+  let older = [];
+  let before = oldestId;
+  let complete = false;
+  for (let page = 0; page < 200; page++) {
+    const raw = await api(historyPath(t, before));
+    if (current !== t) return; // 대화를 바꾸면 중단
+    $('#msg-search-count').textContent = '불러오는 중 ' + (older.length + chatMsgs.length) + '개';
+    if (!raw.length) { complete = true; break; }
+    const rows = await Promise.all(raw.map((m) => decryptMsg(m)));
+    older = rows.concat(older);
+    before = rows[0].id;
+    if (raw.length < 50) { complete = true; break; }
+  }
+  const seen = new Set(older.map((m) => m.id));
+  chatMsgs = older.concat(chatMsgs.filter((m) => !seen.has(m.id)));
+  oldestId = chatMsgs.length ? chatMsgs[0].id : null;
+  $('#more').hidden = complete;
+  deepLoadedKey = complete ? key : null;
+  renderChat('keep');
+  runMsgSearch();
+}
+$('#msg-search-deep').onclick = async () => {
+  if (!current) return;
+  $('#msg-search-results').hidden = true;
+  try {
+    await loadAllHistory();
+  } catch (err) {
+    $('#msg-search-count').textContent = err.message;
+  }
+};
+
 // ===== 전체 기록 검색 (서버, 평문 메시지 대상) =====
 let srvSearch = null; // { q, next }
 
