@@ -326,6 +326,10 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .msg-search input { flex: 1; min-width: 0; }
 .msg-row.search-hit { background: rgba(255, 214, 0, 0.18); }
 .msg-row.search-cur { background: rgba(255, 214, 0, 0.42); }
+.msg-search-results { max-height: 40vh; overflow-y: auto; padding: 6px 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.25); }
+.msg-search-results[hidden] { display: none; }
+.srv-hit { padding: 6px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.srv-hit:hover { background: rgba(127, 127, 127, 0.12); }
 .voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.6; } }
 

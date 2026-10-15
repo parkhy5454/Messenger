@@ -2067,6 +2067,7 @@ function openMsgSearch() {
 
 function closeMsgSearch() {
   $('#msg-search').hidden = true;
+  $('#msg-search-results').hidden = true;
   $('#msg-search-input').value = '';
   searchHits = [];
   searchIdx = -1;
@@ -2093,6 +2094,7 @@ function showMsgHit() {
 }
 
 function runMsgSearch() {
+  $('#msg-search-results').hidden = true;
   const q = $('#msg-search-input').value.trim().toLowerCase();
   searchHits = [];
   searchIdx = -1;
@@ -2121,6 +2123,72 @@ $('#msg-search-input').onkeydown = (e) => {
 $('#msg-search-prev').onclick = () => stepMsgHit(-1);
 $('#msg-search-next').onclick = () => stepMsgHit(1);
 $('#msg-search-close').onclick = closeMsgSearch;
+
+// ===== 전체 기록 검색 (서버, 평문 메시지 대상) =====
+let srvSearch = null; // { q, next }
+
+function srvSearchRow(it, q) {
+  const row = document.createElement('div');
+  row.className = 'srv-hit';
+  const head = document.createElement('div');
+  head.className = 'muted';
+  const d = new Date(it.created_at);
+  head.textContent = it.sender_name + ' · ' + d.getFullYear() + '.' + (d.getMonth() + 1) + '.' + d.getDate();
+  const body = document.createElement('div');
+  const text = String(it.text || '');
+  const at = text.toLowerCase().indexOf(q.toLowerCase());
+  const start = Math.max(0, at - 30);
+  body.textContent = (start > 0 ? '…' : '') + text.slice(start, start + 100);
+  row.append(head, body);
+  row.onclick = () => jumpToMessage(it.id);
+  return row;
+}
+
+async function fetchSrvPage() {
+  const more = srvSearch.next ? '&before=' + srvSearch.next : '';
+  const r = await api(searchBasePath() + '?q=' + encodeURIComponent(srvSearch.q) + more);
+  const list = $('#msg-search-list');
+  for (const it of r.items) list.appendChild(srvSearchRow(it, srvSearch.q));
+  srvSearch.next = r.next;
+  srvSearch.count = (srvSearch.count || 0) + r.items.length;
+  $('#msg-search-more').hidden = !r.next;
+  $('#msg-search-note').textContent = srvSearch.count ? '전체 기록에서 ' + srvSearch.count + '개' + (r.next ? ' 이상' : '') + ' 찾았습니다' : '전체 기록에서 찾지 못했습니다';
+}
+
+function searchBasePath() {
+  return current.type === 'group' ? '/api/search/group/' + current.id : '/api/search/dm/' + current.id;
+}
+
+$('#msg-search-all').onclick = async () => {
+  const q = $('#msg-search-input').value.trim();
+  if (!q || !current) return;
+  srvSearch = { q, next: null, count: 0 };
+  $('#msg-search-list').innerHTML = '';
+  $('#msg-search-results').hidden = false;
+  $('#msg-search-note').textContent = chatMsgs.some((m) => m.enc) ? '암호화된 메시지는 서버에서 검색되지 않아 평문 메시지만 찾습니다' : '';
+  try {
+    await fetchSrvPage();
+  } catch (err) {
+    $('#msg-search-note').textContent = err.message;
+  }
+};
+$('#msg-search-more').onclick = () => fetchSrvPage().catch((err) => { $('#msg-search-note').textContent = err.message; });
+
+// 검색 결과 메시지로 이동: 화면에 없으면 이전 기록을 차례로 불러옵니다 (최대 40쪽)
+async function jumpToMessage(id) {
+  const find = () => document.querySelector('#chat-box .msg-row[data-id="' + id + '"]');
+  let guard = 0;
+  while (!find() && guard++ < 40) {
+    const before = oldestId;
+    await loadMessages(false);
+    if (oldestId === before) break;
+  }
+  const row = find();
+  if (!row) return alert('대화 기록에서 메시지를 찾지 못했습니다');
+  clearMsgHits();
+  row.classList.add('search-hit', 'search-cur');
+  row.scrollIntoView({ block: 'center' });
+}
 
 async function openChat(t) {
   clearCompose();

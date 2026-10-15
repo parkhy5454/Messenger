@@ -1792,6 +1792,27 @@ app.post('/api/reports', auth, wrap(async (req, res) => {
 
 // ---- 1:1 메시지 기록 ----
 // before 파라미터로 이전 메시지를 50개씩 불러옵니다
+// ===== 전체 기록 검색 (평문 메시지만: 암호화된 메시지는 서버가 내용을 알 수 없으므로 제외) =====
+function searchLike(q) {
+  return '%' + String(q).slice(0, 100).replace(/[\\%_]/g, '\\$&') + '%';
+}
+app.get('/api/search/dm/:userId', auth, limit({ windowMs: 60 * 1000, max: 60, key: (req) => 'search:' + req.user.id }), wrap(async (req, res) => {
+  const other = Number(req.params.userId);
+  const me = req.user.id;
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ items: [], next: null });
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const { rows } = await pool.query(
+    "SELECT m.id, m.sender_id, u.name AS sender_name, m.text, m.created_at FROM messages m JOIN users u ON u.id = m.sender_id " +
+    "WHERE ((m.sender_id=$1 AND m.recipient_id=$2) OR (m.sender_id=$2 AND m.recipient_id=$1)) AND m.id < $3 " +
+    "AND m.enc = false AND m.kind = 'text' AND m.deleted = false AND (m.expires_at IS NULL OR m.expires_at > now()) " +
+    "AND m.text ILIKE $4 ORDER BY m.id DESC LIMIT 31",
+    [me, other, before, searchLike(q)]
+  );
+  const items = rows.slice(0, 30);
+  res.json({ items, next: rows.length > 30 ? items[items.length - 1].id : null });
+}));
+
 app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const other = Number(req.params.userId);
   const me = req.user.id;
@@ -2001,6 +2022,23 @@ app.post('/api/groups/:id/read', auth, wrap(async (req, res) => {
      ON CONFLICT (user_id, group_id) DO UPDATE SET last_msg_id = GREATEST(group_reads.last_msg_id, EXCLUDED.last_msg_id), updated_at = now()`,
     [req.user.id, gid, last]);
   res.json({ ok: true });
+}));
+
+// 그룹 전체 기록 검색 (평문 메시지만, 멤버만 가능)
+app.get('/api/search/group/:id', auth, limit({ windowMs: 60 * 1000, max: 60, key: (req) => 'search:' + req.user.id }), wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ items: [], next: null });
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const { rows } = await pool.query(
+    "SELECT m.id, m.sender_id, u.name AS sender_name, m.text, m.created_at FROM messages m JOIN users u ON u.id = m.sender_id " +
+    "WHERE m.group_id = $1 AND m.id < $2 AND m.enc = false AND m.kind = 'text' AND m.deleted = false " +
+    "AND m.text ILIKE $3 ORDER BY m.id DESC LIMIT 31",
+    [groupId, before, searchLike(q)]
+  );
+  const items = rows.slice(0, 30);
+  res.json({ items, next: rows.length > 30 ? items[items.length - 1].id : null });
 }));
 
 app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {

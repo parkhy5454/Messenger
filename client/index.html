@@ -532,7 +532,13 @@
         <span id="msg-search-count" class="muted"></span>
         <button id="msg-search-prev" class="ghost" type="button" title="이전 결과">↑</button>
         <button id="msg-search-next" class="ghost" type="button" title="다음 결과">↓</button>
+        <button id="msg-search-all" class="ghost" type="button" title="서버에 저장된 전체 기록에서 찾기">전체 검색</button>
         <button id="msg-search-close" class="ghost" type="button">닫기</button>
+      </div>
+      <div id="msg-search-results" class="msg-search-results" hidden>
+        <p id="msg-search-note" class="muted"></p>
+        <div id="msg-search-list"></div>
+        <button id="msg-search-more" class="link" type="button" hidden>더 찾기</button>
       </div>
       <div id="summary-panel" hidden><p id="summary-text"></p><button id="summary-close" class="ghost" type="button">닫기</button></div>
       <div id="call-banner" hidden><span id="call-banner-text"></span><button id="call-join" class="primary" type="button">참여</button></div>
