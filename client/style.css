@@ -301,3 +301,10 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #gb-notice-form, #gb-event-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 #gb-notice-form[hidden], #gb-event-form[hidden] { display: none; }
 #gb-events li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* 그룹 투표 */
+#gb-polls > li { border: 1px solid rgba(127,127,127,.25); border-radius: 10px; padding: 10px; margin: 8px 0; list-style: none; }
+#gb-polls .poll-q { font-weight: 600; margin-bottom: 6px; }
+#gb-polls .poll-opt { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+#gb-polls .poll-actions { display: flex; gap: 8px; margin-top: 6px; }
+#gb-poll-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }

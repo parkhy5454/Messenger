@@ -283,3 +283,24 @@ CREATE TABLE IF NOT EXISTS group_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS group_events_group ON group_events (group_id, starts_at);
+
+-- 그룹 투표
+CREATE TABLE IF NOT EXISTS polls (
+  id SERIAL PRIMARY KEY,
+  group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  payload TEXT NOT NULL,
+  epoch INT,
+  multi BOOLEAN NOT NULL DEFAULT false,
+  opt_count INT NOT NULL,
+  closes_at TIMESTAMPTZ NOT NULL,
+  closed BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS poll_votes (
+  poll_id INT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  option_idx INT NOT NULL,
+  PRIMARY KEY (poll_id, user_id, option_idx)
+);
+CREATE INDEX IF NOT EXISTS polls_group ON polls (group_id, id);

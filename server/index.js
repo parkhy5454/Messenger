@@ -847,6 +847,96 @@ app.get('/api/status', wrap(async (req, res) => {
   });
 }));
 
+// ---- 그룹 투표 (멤버 누구나 만들 수 있고, 만든 사람 또는 방장이 일찍 마감 가능) ----
+// 질문·항목은 payload 에 담김 (암호화 그룹이면 그룹 키로 암호화). 집계를 위해 누가 어떤 항목을 골랐는지는 서버에 남음.
+const POLL_MIN_MS = 60 * 1000;
+const POLL_MAX_MS = 7 * 24 * 3600 * 1000;
+
+app.get('/api/groups/:id/polls', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const { rows } = await pool.query(
+    `SELECT p.id, p.payload, p.epoch, p.multi, p.opt_count, p.closes_at, p.created_by,
+       (p.closed OR p.closes_at <= now()) AS closed,
+       COALESCE((SELECT json_object_agg(x.option_idx, x.n)
+                 FROM (SELECT option_idx, COUNT(*)::int AS n FROM poll_votes WHERE poll_id = p.id GROUP BY option_idx) x), '{}') AS counts,
+       (SELECT COUNT(DISTINCT user_id)::int FROM poll_votes WHERE poll_id = p.id) AS total,
+       COALESCE((SELECT json_agg(option_idx ORDER BY option_idx) FROM poll_votes WHERE poll_id = p.id AND user_id = $2), '[]') AS mine
+     FROM polls p WHERE p.group_id = $1 ORDER BY p.id DESC LIMIT 30`,
+    [gid, req.user.id]);
+  res.json(rows);
+}));
+
+app.post('/api/groups/:id/polls', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const b = req.body || {};
+  const payload = String(b.payload || '');
+  const optCount = Number(b.optCount);
+  const closesAt = new Date(b.closesAt);
+  if (!payload || payload.length > 20000) return res.status(400).json({ error: '투표 내용을 확인하세요' });
+  if (!Number.isInteger(optCount) || optCount < 2 || optCount > 10) return res.status(400).json({ error: '항목은 2~10개여야 합니다' });
+  const left = closesAt - Date.now();
+  if (isNaN(closesAt) || left < POLL_MIN_MS || left > POLL_MAX_MS) {
+    return res.status(400).json({ error: '마감은 1분 뒤부터 7일 이내로 정하세요' });
+  }
+  const grp = (await pool.query('SELECT enc FROM groups WHERE id=$1', [gid])).rows[0];
+  const epoch = grp && grp.enc ? Number(b.epoch) : null;
+  if (grp && grp.enc && !Number.isInteger(epoch)) return res.status(400).json({ error: 'KEY_REQUIRED' });
+  const r = await pool.query(
+    `INSERT INTO polls (group_id, created_by, payload, epoch, multi, opt_count, closes_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [gid, req.user.id, payload, epoch, !!b.multi, optCount, closesAt]);
+  await broadcastBoard(gid);
+  res.json({ id: r.rows[0].id });
+}));
+
+// 투표 (다시 투표하면 이전 선택을 바꿈)
+app.post('/api/groups/:id/polls/:pid/vote', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const pid = Number(req.params.pid);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const p = (await pool.query(
+    'SELECT multi, opt_count, closes_at, closed FROM polls WHERE id=$1 AND group_id=$2', [pid, gid])).rows[0];
+  if (!p) return res.status(404).json({ error: '투표를 찾을 수 없습니다' });
+  if (p.closed || new Date(p.closes_at) <= new Date()) return res.status(400).json({ error: '마감된 투표입니다' });
+  const opts = Array.isArray((req.body || {}).options) ? [...new Set(req.body.options.map(Number))] : [];
+  if (!opts.length || opts.some((i) => !Number.isInteger(i) || i < 0 || i >= p.opt_count)) {
+    return res.status(400).json({ error: '항목을 확인하세요' });
+  }
+  if (!p.multi && opts.length !== 1) return res.status(400).json({ error: '한 개만 선택할 수 있습니다' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM poll_votes WHERE poll_id=$1 AND user_id=$2', [pid, req.user.id]);
+    for (const i of opts) {
+      await client.query('INSERT INTO poll_votes (poll_id, user_id, option_idx) VALUES ($1,$2,$3)', [pid, req.user.id, i]);
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  await broadcastBoard(gid);
+  res.json({ ok: true });
+}));
+
+app.post('/api/groups/:id/polls/:pid/close', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const pid = Number(req.params.pid);
+  const p = (await pool.query('SELECT created_by FROM polls WHERE id=$1 AND group_id=$2', [pid, gid])).rows[0];
+  if (!p) return res.status(404).json({ error: '투표를 찾을 수 없습니다' });
+  const owner = (await pool.query('SELECT owner_id FROM groups WHERE id=$1', [gid])).rows[0];
+  if (p.created_by !== req.user.id && !(owner && owner.owner_id === req.user.id)) {
+    return res.status(403).json({ error: '만든 사람 또는 방장만 마감할 수 있습니다' });
+  }
+  await pool.query('UPDATE polls SET closed=true WHERE id=$1', [pid]);
+  await broadcastBoard(gid);
+  res.json({ ok: true });
+}));
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;

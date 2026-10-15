@@ -187,6 +187,15 @@
         <input id="gb-event-time" type="datetime-local" />
         <button type="submit" class="primary">일정 추가</button>
       </form>
+      <h2>투표</h2>
+      <ul id="gb-polls" class="plain"></ul>
+      <form id="gb-poll-form">
+        <input id="gb-poll-q" maxlength="100" placeholder="투표 질문" />
+        <textarea id="gb-poll-opts" rows="3" placeholder="항목을 한 줄에 하나씩 (2~10개)"></textarea>
+        <label><input id="gb-poll-multi" type="checkbox" /> 여러 개 선택 가능</label>
+        <label class="muted">마감 시각 <input id="gb-poll-close" type="datetime-local" /></label>
+        <button type="submit" class="primary">투표 만들기</button>
+      </form>
       <p id="gb-msg" class="msg-line"></p>
       <button id="gb-back" class="link" type="button">대화로 돌아가기</button>
     </div>

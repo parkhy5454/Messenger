@@ -2551,6 +2551,7 @@ async function renderBoard() {
     : '등록된 공지가 없습니다';
   $('#gb-notice-form').hidden = !s.owner;
   $('#gb-event-form').hidden = !s.owner;
+  await renderPolls(gid, s.enc).catch(() => {});
   const ul = $('#gb-events');
   ul.innerHTML = '';
   if (!s.events.length) {
@@ -2694,3 +2695,124 @@ async function exportAll() {
     msg.textContent = e.message;
   }
 }
+
+// ===== 그룹 투표 =====
+async function renderPolls(gid, enc) {
+  const list = await api('/api/groups/' + gid + '/polls');
+  const box = $('#gb-polls');
+  box.innerHTML = '';
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = '진행 중이거나 지난 투표가 없습니다';
+    box.appendChild(li);
+  }
+  for (const p of list) {
+    let data;
+    try {
+      data = JSON.parse(await openBoardText(gid, enc, p.epoch, p.payload));
+    } catch (_) {
+      data = { q: '(열 수 없는 투표)', o: [] };
+    }
+    const li = document.createElement('li');
+    li.className = 'poll';
+    const head = document.createElement('div');
+    head.className = 'poll-q';
+    const endText = p.closed
+      ? '마감'
+      : '마감 ' + new Date(p.closes_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+    head.textContent = data.q + ' · ' + endText + (p.multi ? ' · 복수 선택' : '') + ' · 참여 ' + p.total + '명';
+    li.appendChild(head);
+    const inputs = [];
+    data.o.forEach((label, idx) => {
+      const row = document.createElement('label');
+      row.className = 'poll-opt';
+      const input = document.createElement('input');
+      input.type = p.multi ? 'checkbox' : 'radio';
+      input.name = 'poll' + p.id;
+      input.value = String(idx);
+      input.checked = p.mine.includes(idx);
+      input.disabled = !!p.closed;
+      const n = Number(p.counts[idx]) || 0;
+      const pct = p.total ? Math.round((n / p.total) * 100) : 0;
+      const txt = document.createElement('span');
+      txt.textContent = label + ' · ' + n + '표 (' + pct + '%)';
+      row.append(input, txt);
+      li.appendChild(row);
+      inputs.push(input);
+    });
+    const actions = document.createElement('div');
+    actions.className = 'poll-actions';
+    if (!p.closed) {
+      const vote = document.createElement('button');
+      vote.type = 'button';
+      vote.className = 'primary small-btn';
+      vote.textContent = p.mine.length ? '투표 바꾸기' : '투표하기';
+      vote.onclick = async () => {
+        const picked = inputs.filter((i) => i.checked).map((i) => Number(i.value));
+        if (!picked.length) return alert('항목을 선택하세요');
+        try {
+          await api('/api/groups/' + gid + '/polls/' + p.id + '/vote', { method: 'POST', body: JSON.stringify({ options: picked }) });
+          await refreshBoard(gid);
+        } catch (e) {
+          alert(e.message);
+        }
+      };
+      actions.appendChild(vote);
+      if (p.created_by === me.id || (boardState && boardState.owner)) {
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'ghost small-btn';
+        close.textContent = '마감하기';
+        close.onclick = async () => {
+          if (!confirm('이 투표를 지금 마감할까요?')) return;
+          try {
+            await api('/api/groups/' + gid + '/polls/' + p.id + '/close', { method: 'POST' });
+            await refreshBoard(gid);
+          } catch (e) {
+            alert(e.message);
+          }
+        };
+        actions.appendChild(close);
+      }
+    }
+    li.appendChild(actions);
+    box.appendChild(li);
+  }
+}
+
+$('#gb-poll-form').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!current || current.type !== 'group') return;
+  const q = $('#gb-poll-q').value.trim();
+  const opts = $('#gb-poll-opts').value.split('\n').map((s) => s.trim()).filter(Boolean);
+  const closeAt = $('#gb-poll-close').value;
+  const multi = $('#gb-poll-multi').checked;
+  if (!q) return ($('#gb-msg').textContent = '투표 질문을 입력하세요');
+  if (opts.length < 2 || opts.length > 10) return ($('#gb-msg').textContent = '항목은 2~10개 입력하세요');
+  if (!closeAt) return ($('#gb-msg').textContent = '마감 시각을 정하세요');
+  const closesAt = new Date(closeAt);
+  const left = closesAt - Date.now();
+  if (left < 60000 || left > 7 * 24 * 3600 * 1000) return ($('#gb-msg').textContent = '마감은 1분 뒤부터 7일 이내로 정하세요');
+  try {
+    const sealed = await sealBoardText(JSON.stringify({ q, o: opts }));
+    await api('/api/groups/' + current.id + '/polls', {
+      method: 'POST',
+      body: JSON.stringify({
+        payload: sealed.body,
+        epoch: sealed.epoch,
+        multi,
+        optCount: opts.length,
+        closesAt: closesAt.toISOString(),
+      }),
+    });
+    $('#gb-poll-q').value = '';
+    $('#gb-poll-opts').value = '';
+    $('#gb-poll-close').value = '';
+    $('#gb-poll-multi').checked = false;
+    $('#gb-msg').textContent = '투표를 만들었습니다.';
+    await refreshBoard(current.id);
+  } catch (err) {
+    $('#gb-msg').textContent = err.message;
+  }
+};
