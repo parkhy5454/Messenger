@@ -2293,7 +2293,7 @@ async function logout() {
   if (socket) socket.disconnect();
   location.reload();
 }
-$('#logout').onclick = logout;
+$('#logout').onclick = () => { if (confirm('로그아웃할까요?')) logout(); };
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
 

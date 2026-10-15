@@ -336,3 +336,5 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .kk-gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; background: rgba(127,127,127,0.15); }
 
 .logout-btn { margin-left: auto; white-space: nowrap; }
+
+.logout-row { color: #e5484d !important; }
