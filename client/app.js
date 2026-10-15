@@ -3974,3 +3974,17 @@ $('#preview-on').onchange = async () => {
     $('#quiet-msg').textContent = e.message;
   }
 };
+
+// 약관 링크: 새 탭 대신 앱 안의 뷰어로 열어서, 닫으면 가입·동의 화면 입력이 그대로 남습니다
+document.addEventListener('click', (e) => {
+  const link = e.target.closest && e.target.closest('a[href="/terms.html"], a[href="/privacy.html"]');
+  if (!link) return;
+  e.preventDefault();
+  $('#policy-title').textContent = link.textContent;
+  $('#policy-frame').src = link.getAttribute('href');
+  $('#policy-view').hidden = false;
+});
+$('#policy-close').onclick = () => {
+  $('#policy-view').hidden = true;
+  $('#policy-frame').src = 'about:blank';
+};

@@ -31,7 +31,7 @@ app.use((req, res, next) => {
       "media-src 'self' blob:",
       "font-src 'self' data:",
       "connect-src 'self' https://js.tosspayments.com",
-      "frame-src https://js.tosspayments.com https://*.tosspayments.com",
+      "frame-src 'self' https://js.tosspayments.com https://*.tosspayments.com",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -43,6 +43,14 @@ app.use((req, res, next) => {
     'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()',
     'Strict-Transport-Security': 'max-age=15552000',
   });
+  next();
+});
+// 약관 페이지는 앱 안에서 펼쳐 볼 수 있도록 같은 출처 프레임만 허용
+app.use((req, res, next) => {
+  if (req.path === '/terms.html' || req.path === '/privacy.html') {
+    res.set('X-Frame-Options', 'SAMEORIGIN');
+    res.set('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'");
+  }
   next();
 });
 app.use(express.static(path.join(__dirname, '..', 'client')));

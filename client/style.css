@@ -378,3 +378,10 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .logout-row { color: #e5484d !important; }
 
 .unread-line { text-align: center; font-size: 12px; opacity: 0.75; padding: 6px 0; margin: 8px 0; border-top: 1px dashed rgba(127,127,127,0.45); }
+
+/* 약관 뷰어 (앱 안에서 펼침) */
+.policy-view { position: fixed; inset: 0; z-index: 1100; display: flex; flex-direction: column; background: Canvas; color: CanvasText; }
+.policy-view[hidden] { display: none; }
+.policy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.policy-head button { width: auto; padding: 8px 14px; }
+#policy-frame { flex: 1; width: 100%; border: none; }
