@@ -675,6 +675,71 @@ async function deleteOrphanFile(id) {
     [id]).catch(() => {});
 }
 
+// ---- 방해 금지 시간 / 대화방 알림 끄기 ----
+// 방해 금지 시간에는 푸시 알림만 보내지 않음 (메시지는 저장되고 앱에서 확인 가능). 시간은 한국 시간 기준.
+function kstHour() {
+  return Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+}
+function inQuietWindow(from, to, h) {
+  if (from === to) return false;
+  return from < to ? h >= from && h < to : h >= from || h < to;
+}
+// 푸시 대상 중에서 방해 금지 중인 사용자와, 해당 대화방 알림을 끈 사용자를 제외
+async function filterQuietAndMuted(ids, tag) {
+  const h = kstHour();
+  const { rows } = await pool.query(
+    'SELECT id, quiet_on, quiet_from, quiet_to FROM users WHERE id = ANY($1::int[])', [ids]);
+  let keep = rows.filter((u) => !(u.quiet_on && inQuietWindow(u.quiet_from, u.quiet_to, h))).map((u) => u.id);
+  const m = /^(dm|group)-(\d+)$/.exec(tag || '');
+  if (m && keep.length) {
+    const mr = await pool.query(
+      'SELECT user_id FROM muted_chats WHERE user_id = ANY($1::int[]) AND kind=$2 AND target_id=$3',
+      [keep, m[1], Number(m[2])]);
+    const muted = new Set(mr.rows.map((r) => r.user_id));
+    keep = keep.filter((id) => !muted.has(id));
+  }
+  return keep;
+}
+
+app.get('/api/prefs/quiet', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT quiet_on, quiet_from, quiet_to FROM users WHERE id=$1', [req.user.id]);
+  const r = rows[0];
+  res.json({ on: r.quiet_on, from: r.quiet_from, to: r.quiet_to });
+}));
+
+app.put('/api/prefs/quiet', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const from = Number(b.from);
+  const to = Number(b.to);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from > 23 || to < 0 || to > 23) {
+    return res.status(400).json({ error: '시간은 0~23 사이로 입력하세요' });
+  }
+  await pool.query('UPDATE users SET quiet_on=$2, quiet_from=$3, quiet_to=$4 WHERE id=$1', [req.user.id, !!b.on, from, to]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/prefs/mutes', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT kind, target_id AS id FROM muted_chats WHERE user_id=$1', [req.user.id]);
+  res.json(rows);
+}));
+
+// 대화방 알림 끄기/켜기. dm: 상대 사용자 id, group: 그룹 id
+app.put('/api/prefs/mutes', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const kind = b.kind;
+  const id = Number(b.id);
+  if ((kind !== 'dm' && kind !== 'group') || !id) return res.status(400).json({ error: '대화를 확인하세요' });
+  if (kind === 'group' && !(await isGroupMember(id, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  if (b.muted) {
+    await pool.query(
+      'INSERT INTO muted_chats (user_id, kind, target_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+      [req.user.id, kind, id]);
+  } else {
+    await pool.query('DELETE FROM muted_chats WHERE user_id=$1 AND kind=$2 AND target_id=$3', [req.user.id, kind, id]);
+  }
+  res.json({ ok: true });
+}));
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;
@@ -1744,7 +1809,10 @@ function previewText(kind, text) {
 
 // 앱이 연결되어 있지 않은 사용자에게만 푸시를 보냅니다 (연결 중이면 소켓으로 이미 받음)
 async function notifyUsers(userIds, payload, exceptUserId) {
-  const targets = [...new Set(userIds)].filter((id) => id !== exceptUserId && !io.sockets.adapter.rooms.get('user:' + id));
+  let targets = [...new Set(userIds)].filter((id) => id !== exceptUserId && !io.sockets.adapter.rooms.get('user:' + id));
+  if (!targets.length) return;
+  // 방해 금지 시간과 대화방 알림 끄기 적용
+  targets = await filterQuietAndMuted(targets, payload.tag);
   if (!targets.length) return;
   const { rows } = await pool.query(
     'SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id = ANY($1::int[])',

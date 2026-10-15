@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -1148,6 +1148,7 @@ async function enterMain() {
   $('#btn-admin').hidden = !me.is_admin;
   refreshPlanState().catch(() => {});
   handleBillingReturn();
+  loadMutes().catch(() => {});
   renderReceiptsBtn();
   renderVisBtns();
   await loadRequests();
@@ -1356,6 +1357,7 @@ async function openChat(t) {
   if (t.type === 'dm') refreshReceiptBtn();
   $('#group-actions').hidden = t.type !== 'group';
   $('#call-banner').hidden = true;
+  renderMuteBtn();
   if (t.type === 'group') socket.emit('call:status', { groupId: t.id }, (r) => {
     if (r && !r.error) {
       callCounts.set(t.id, r.count);
@@ -2425,3 +2427,70 @@ async function handleBillingReturn() {
     alert(e.message);
   }
 }
+
+// ===== 방해 금지 시간 / 대화방 알림 끄기 =====
+const mutedKeys = new Set(); // 'dm:12' 또는 'group:3'
+
+async function loadMutes() {
+  const list = await api('/api/prefs/mutes');
+  mutedKeys.clear();
+  for (const m of list) mutedKeys.add(m.kind + ':' + m.id);
+}
+
+function renderMuteBtn() {
+  if (!current) return;
+  $('#btn-mute').textContent = mutedKeys.has(current.type + ':' + current.id) ? '알림 켜기' : '알림 끄기';
+}
+
+$('#btn-mute').onclick = async () => {
+  if (!current) return;
+  const key = current.type + ':' + current.id;
+  const muted = !mutedKeys.has(key);
+  try {
+    await api('/api/prefs/mutes', { method: 'PUT', body: JSON.stringify({ kind: current.type, id: current.id, muted }) });
+    if (muted) mutedKeys.add(key);
+    else mutedKeys.delete(key);
+    renderMuteBtn();
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+function fillHours(sel) {
+  sel.innerHTML = '';
+  for (let h = 0; h < 24; h++) {
+    const o = document.createElement('option');
+    o.value = h;
+    o.textContent = String(h).padStart(2, '0') + ':00';
+    sel.append(o);
+  }
+}
+
+async function openQuiet() {
+  fillHours($('#quiet-from'));
+  fillHours($('#quiet-to'));
+  $('#quiet-msg').textContent = '';
+  showView('quiet');
+  try {
+    const q = await api('/api/prefs/quiet');
+    $('#quiet-on').checked = !!q.on;
+    $('#quiet-from').value = q.from;
+    $('#quiet-to').value = q.to;
+  } catch (e) {
+    $('#quiet-msg').textContent = e.message;
+  }
+}
+
+$('#btn-quiet').onclick = () => openQuiet();
+$('#quiet-back').onclick = () => openMain('settings');
+$('#quiet-save').onclick = async () => {
+  try {
+    await api('/api/prefs/quiet', {
+      method: 'PUT',
+      body: JSON.stringify({ on: $('#quiet-on').checked, from: Number($('#quiet-from').value), to: Number($('#quiet-to').value) }),
+    });
+    $('#quiet-msg').textContent = '저장했습니다.';
+  } catch (e) {
+    $('#quiet-msg').textContent = e.message;
+  }
+};

@@ -256,3 +256,14 @@ CREATE TABLE IF NOT EXISTS payments (
   payment_key TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- 방해 금지 시간 (한국 시간 기준, 푸시만 차단) 과 대화방 알림 끄기
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quiet_on BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quiet_from SMALLINT NOT NULL DEFAULT 22;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS quiet_to SMALLINT NOT NULL DEFAULT 8;
+CREATE TABLE IF NOT EXISTS muted_chats (
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('dm', 'group')),
+  target_id INT NOT NULL,
+  PRIMARY KEY (user_id, kind, target_id)
+);

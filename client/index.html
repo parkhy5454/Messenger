@@ -121,6 +121,22 @@
     </div>
   </div>
 
+  <!-- 방해 금지 시간 -->
+  <section id="view-quiet" class="view" hidden>
+    <div class="card">
+      <h1>방해 금지 시간</h1>
+      <p class="muted">설정한 시간에는 새 메시지 알림을 보내지 않습니다. 메시지는 그대로 쌓이고 앱을 열면 확인할 수 있습니다. 시간은 한국 시간 기준입니다. 대화방별 알림 끄기는 대화 화면 상단 버튼으로 설정합니다.</p>
+      <label><input id="quiet-on" type="checkbox" /> 방해 금지 시간 사용</label>
+      <div class="qrow">
+        <label>시작 <select id="quiet-from"></select></label>
+        <label>종료 <select id="quiet-to"></select></label>
+      </div>
+      <p id="quiet-msg" class="msg-line"></p>
+      <button id="quiet-save" class="primary" type="button">저장</button>
+      <button id="quiet-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <!-- 프리미엄 구독 -->
   <section id="view-plan" class="view" hidden>
     <div class="card">
@@ -315,6 +331,7 @@
         <li><button id="btn-ai" class="ghost wide-btn" type="button">AI 어시스턴트</button></li>
         <li><button id="btn-bots" class="ghost wide-btn" type="button">봇 (명령 도우미)</button></li>
         <li><button id="btn-plan" class="ghost wide-btn" type="button">프리미엄 구독</button></li>
+        <li><button id="btn-quiet" class="ghost wide-btn" type="button">방해 금지 시간</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
@@ -337,6 +354,7 @@
         <button id="chat-back" type="button" aria-label="뒤로">‹</button>
         <strong id="chat-title">대화를 선택하세요</strong>
         <button id="btn-export" class="ghost" type="button">내보내기</button>
+        <button id="btn-mute" class="ghost" type="button">알림 끄기</button>
         <div id="dm-actions" hidden>
           <button id="btn-safety" class="ghost" type="button">보안</button>
           <button id="btn-ttl" class="ghost" type="button">자동삭제</button>

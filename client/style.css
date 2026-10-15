@@ -289,3 +289,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .ai-bubble.ai { align-self: flex-start; background: #f1f1f1; }
 #ai-form { display: flex; gap: 8px; margin-top: 8px; }
 #ai-input { flex: 1; }
+
+/* 방해 금지 시간 */
+.qrow { display: flex; gap: 12px; margin: 8px 0; }
+.qrow label { flex: 1; display: flex; flex-direction: column; gap: 4px; }
