@@ -864,6 +864,47 @@ app.delete('/api/groups/:id/events/:eid', auth, wrap(async (req, res) => {
 // ---- 공개 상태 페이지용 API (로그인 불필요, 내부 수치는 노출하지 않음) ----
 // 장애 이력은 server/incidents.json 에 직접 기록합니다. 형식: [{ "date": "2026-10-14", "title": "...", "detail": "...", "resolved": true }]
 const INCIDENTS_FILE = path.join(__dirname, 'incidents.json');
+// ---- 장애 공개 대시보드: 5분마다 DB 상태를 기록하고 최근 30일 가용률을 보여 줌 ----
+async function sampleStatus() {
+  const t0 = Date.now();
+  let ok = true;
+  try {
+    await pool.query('SELECT 1');
+  } catch (_) {
+    ok = false;
+  }
+  try {
+    await pool.query('INSERT INTO status_samples (ok, latency_ms) VALUES ($1,$2)', [ok, Math.max(0, Date.now() - t0)]);
+    await pool.query("DELETE FROM status_samples WHERE ts < now() - interval '90 days'");
+  } catch (_) {}
+}
+async function statusHistory() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT (ts AT TIME ZONE 'Asia/Seoul')::date::text AS d, COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE ok)::int AS up, ROUND(AVG(latency_ms))::int AS avg_ms
+       FROM status_samples WHERE ts > now() - interval '30 days' GROUP BY 1`);
+    const byDay = new Map(rows.map((r) => [r.d, r]));
+    const days = [];
+    const kstNow = new Date(Date.now() + 9 * 3600 * 1000);
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(kstNow.getTime() - i * 86400000).toISOString().slice(0, 10);
+      const r = byDay.get(d);
+      days.push({
+        date: d,
+        uptime: r ? Math.round((r.up / r.total) * 10000) / 100 : null,
+        samples: r ? r.total : 0,
+        avg_ms: r ? r.avg_ms : null,
+      });
+    }
+    const total = rows.reduce((a, r) => a + r.total, 0);
+    const up = rows.reduce((a, r) => a + r.up, 0);
+    return { days, uptime30: total ? Math.round((up / total) * 10000) / 100 : null };
+  } catch (_) {
+    return null;
+  }
+}
+
 app.get('/api/status', wrap(async (req, res) => {
   const t0 = Date.now();
   let dbOk = true;
@@ -876,9 +917,11 @@ app.get('/api/status', wrap(async (req, res) => {
   try {
     incidents = JSON.parse(fs.readFileSync(INCIDENTS_FILE, 'utf8'));
   } catch (_) {}
+  const history = await statusHistory();
   res.set('Cache-Control', 'no-store');
   res.json({
     ok: dbOk,
+    history,
     db: dbOk ? 'ok' : 'error',
     latency_ms: Date.now() - t0,
     checked_at: new Date().toISOString(),
@@ -2288,6 +2331,8 @@ async function purgeExpired() {
   }
 }
 setInterval(() => purgeExpired().catch((e) => console.error('자동 삭제 오류:', e)), 30000);
+setInterval(() => sampleStatus(), 5 * 60 * 1000).unref();
+setTimeout(() => sampleStatus(), 60 * 1000).unref();
 
 // ---- 예약 전송: 시간이 되면 메시지를 보냅니다 (10초마다 확인) ----
 async function sendDueScheduled() {

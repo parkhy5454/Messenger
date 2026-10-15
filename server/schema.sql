@@ -308,3 +308,10 @@ CREATE INDEX IF NOT EXISTS polls_group ON polls (group_id, id);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS share_token TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS discoverable BOOLEAN NOT NULL DEFAULT false;
 CREATE UNIQUE INDEX IF NOT EXISTS users_share_token ON users (share_token) WHERE share_token IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS status_samples (
+  ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ok BOOLEAN NOT NULL,
+  latency_ms INT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS status_samples_ts ON status_samples (ts);

@@ -2943,7 +2943,35 @@ $('#quiet-save').onclick = async () => {
 };
 
 // ===== 그룹 게시판 (목적 템플릿 · 공지 · 일정, 방장만 작성) =====
-const PURPOSE_LABEL = { general: '일반 그룹', parents: '학부모 모임', club: '동호회', guild: '게임 길드', study: '스터디' };
+// 목적별 워크스페이스 템플릿: 이름, 공지 초안(방장이 고쳐서 저장), 일정·투표 입력 안내
+const GROUP_TEMPLATES = {
+  general: { label: '일반 그룹', notice: '', eventHint: '예: 회의 일정', pollHint: '투표 질문' },
+  parents: {
+    label: '학부모 모임',
+    notice: '안녕하세요, 학부모 모임입니다. 학교 일정과 공지는 여기서 확인해 주세요.',
+    eventHint: '예: 학부모 총회, 체험학습',
+    pollHint: '예: 참석 여부, 간식 담당',
+  },
+  club: {
+    label: '동호회',
+    notice: '동호회 활동 공지를 여기에 올려 주세요. 정기 모임 장소와 시간을 먼저 정해 두면 좋아요.',
+    eventHint: '예: 정기 모임, 번개',
+    pollHint: '예: 다음 모임 날짜 정하기',
+  },
+  guild: {
+    label: '게임 길드',
+    notice: '길드 규칙과 가입 안내를 여기에 적어 주세요. 레이드 일정은 게시판 일정에 올립니다.',
+    eventHint: '예: 레이드, 공성전',
+    pollHint: '예: 레이드 참석 여부, 파티 구성',
+  },
+  study: {
+    label: '스터디',
+    notice: '스터디 목표와 진행 방식을 여기에 적어 주세요. 모임 날짜는 일정에 올립니다.',
+    eventHint: '예: 주간 모임, 과제 마감',
+    pollHint: '예: 다음 주제 고르기',
+  },
+};
+const tplOf = (purpose) => GROUP_TEMPLATES[purpose] || GROUP_TEMPLATES.general;
 let boardState = null;
 
 // 암호화 그룹이면 그룹 키로 열고, 아니면 그대로 보여줌
@@ -2987,7 +3015,12 @@ async function renderBoard() {
   if (!s || !current || current.type !== 'group') return;
   const gid = current.id;
   $('#gb-title').textContent = current.name + ' 게시판';
-  $('#gb-purpose').textContent = PURPOSE_LABEL[s.purpose] || '일반 그룹';
+  const tpl = tplOf(s.purpose);
+  $('#gb-purpose').textContent = tpl.label;
+  $('#gb-event-title').placeholder = tpl.eventHint;
+  $('#gb-poll-q').placeholder = tpl.pollHint;
+  // 방장이고 공지가 비어 있으면 목적 템플릿 문구를 넣을 수 있음
+  $('#gb-tpl-btn').hidden = !(s.owner && !s.notice && tpl.notice);
   $('#gb-notice').textContent = s.notice
     ? await openBoardText(gid, s.enc, s.notice_epoch, s.notice)
     : '등록된 공지가 없습니다';
@@ -3035,6 +3068,13 @@ async function openBoard() {
   await refreshBoard(current.id);
 }
 $('#btn-board').onclick = () => openBoard();
+$('#gb-tpl-btn').onclick = () => {
+  const tpl = tplOf(boardState && boardState.purpose);
+  if (!tpl.notice) return;
+  $('#gb-notice-text').value = tpl.notice;
+  $('#gb-notice-text').focus();
+  $('#gb-msg').textContent = '템플릿 문구를 넣었습니다. 내용을 고쳐서 저장하세요.';
+};
 $('#gb-back').onclick = () => {
   showView('main');
   setChatOpen(true);
