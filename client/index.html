@@ -148,8 +148,8 @@
   <section id="view-kakaoimport" class="view" hidden>
     <div class="card">
       <h1>카톡 대화 가져오기</h1>
-      <p class="muted">카카오톡 대화방 설정의 '대화 내보내기'로 저장한 텍스트 파일(.txt)을 고르세요. 전체 데이터 내보내기 파일(.json)도 고를 수 있습니다. 파일은 이 기기 안에서만 읽고 저장하며 서버로 보내지 않습니다. 사진·파일 자체는 가져오지 않고 이름만 남습니다. 기기를 바꾸거나 브라우저 데이터를 지우면 함께 사라집니다. 보관하려면 설정의 "전체 데이터 내보내기"로 받은 JSON 파일을 함께 보관하세요. 기기를 바꾼 뒤 그 JSON을 여기서 다시 가져올 수 있습니다.</p>
-      <input id="kk-file" type="file" accept=".txt,.json,text/plain,application/json" />
+      <p class="muted">카카오톡 대화방 설정의 '대화 내보내기'로 저장한 텍스트 파일(.txt)을 고르세요. 전체 데이터 내보내기 파일(.json)도 고를 수 있습니다. 사진 포함 압축 파일(.zip)도 가능합니다. 파일은 이 기기 안에서만 읽고 저장하며 서버로 보내지 않습니다. 사진·파일 자체는 가져오지 않고 이름만 남습니다. 기기를 바꾸거나 브라우저 데이터를 지우면 함께 사라집니다. 보관하려면 설정의 "전체 데이터 내보내기"로 받은 JSON 파일을 함께 보관하세요. 기기를 바꾼 뒤 그 JSON을 여기서 다시 가져올 수 있습니다.</p>
+      <input id="kk-file" type="file" accept=".txt,.json,.zip,text/plain,application/json,application/zip" />
       <input id="kk-name" type="text" maxlength="60" placeholder="표시 이름 (비우면 카톡 대화방 이름)" />
       <p id="kk-preview" class="muted"></p>
       <button id="kk-save" class="primary" type="button">가져오기</button>
@@ -166,6 +166,9 @@
       <input id="kkv-search" type="search" placeholder="보낸 사람 또는 내용 검색" />
       <p id="kkv-count" class="muted"></p>
       <button id="kkv-more" class="ghost" type="button" hidden>이전 300개 더 보기</button>
+      <button id="kkv-photos-btn" class="ghost" type="button" hidden>사진 모아 보기</button>
+      <div id="kkv-gallery" class="kk-gallery" hidden></div>
+      <button id="kkv-gallery-more" class="ghost" type="button" hidden>사진 더 보기</button>
       <div id="kkv-box" class="kk-box"></div>
       <button id="kakaoview-back" class="link" type="button">목록으로</button>
     </div>
@@ -512,6 +515,7 @@
   <script src="/socket.io/socket.io.js"></script>
   <input id="avatar-input" type="file" accept="image/*" hidden />
   <script src="/e2ee.js"></script>
+  <script src="/vendor/jszip.min.js"></script>
   <script src="/kakao.js"></script>
   <script src="/app.js"></script>
 </body>

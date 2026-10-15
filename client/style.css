@@ -330,3 +330,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 
 .kk-sys { text-align: center; }
 .kk-sys .kk-text { font-style: italic; opacity: 0.7; }
+
+.kk-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 8px; }
+.kk-gallery[hidden] { display: none; }
+.kk-gallery img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 6px; background: rgba(127,127,127,0.15); }

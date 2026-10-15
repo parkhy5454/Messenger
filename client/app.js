@@ -1039,12 +1039,22 @@ async function summarizeChat() {
 }
 
 // ===== 카톡 대화 가져오기: 이 기기(IndexedDB)에만 보관. 서버로 보내지 않음 =====
-const KK_MAX_BYTES = 30 * 1024 * 1024;
-let kkPending = null; // [{ title, messages }]
+const KK_MAX_BYTES = 30 * 1024 * 1024;   // txt / json
+const KK_MAX_ZIP = 300 * 1024 * 1024;    // 사진 포함 압축 파일
+let kkPending = null;      // [{ title, messages }]
+let kkPendingPhotos = [];  // [{ name, size, blob }] (압축 파일일 때만)
 let kkArchive = null;
 let kkShown = 300;
+let kkGalleryUrls = [];
+let kkGalleryShown = 0;
+const KK_GALLERY_PAGE = 60;
 const kkIndexKey = () => 'kakao:' + me.id + ':index';
 const kkKey = (id) => 'kakao:' + me.id + ':' + id;
+const kkPhotoKey = (id, i) => 'kakao:' + me.id + ':' + id + ':p' + i;
+function kkMime(name) {
+  const ext = String(name.split('.').pop() || '').toLowerCase();
+  return { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic' }[ext] || 'application/octet-stream';
+}
 async function kkList() {
   try {
     return (await E2EE.loadKV(kkIndexKey())) || [];
@@ -1054,6 +1064,7 @@ async function kkList() {
 }
 function openKakaoImport() {
   kkPending = null;
+  kkPendingPhotos = [];
   $('#kk-file').value = '';
   $('#kk-name').value = '';
   $('#kk-name').placeholder = '표시 이름 (비우면 대화방 이름)';
@@ -1075,7 +1086,7 @@ async function renderKkList() {
   for (const a of list) {
     const li = document.createElement('li');
     const name = document.createElement('span');
-    name.textContent = a.title + ' · 메시지 ' + a.count + '개';
+    name.textContent = a.title + ' · 메시지 ' + a.count + '개' + (a.photos ? ' · 사진 ' + a.photos + '장' : '');
     const open = document.createElement('button');
     open.type = 'button';
     open.className = 'small-btn';
@@ -1093,7 +1104,10 @@ async function renderKkList() {
 async function kkRemove(id, title) {
   if (!confirm('"' + title + '" 가져온 기록을 이 기기에서 삭제할까요?')) return;
   try {
-    const list = (await kkList()).filter((x) => x.id !== id);
+    const all = await kkList();
+    const gone = all.find((x) => x.id === id);
+    const list = all.filter((x) => x.id !== id);
+    for (let i = 0; gone && i < (gone.photos || 0); i++) await E2EE.saveKV(kkPhotoKey(id, i), null);
     await E2EE.saveKV(kkKey(id), null);
     await E2EE.saveKV(kkIndexKey(), list);
     renderKkList();
@@ -1104,7 +1118,7 @@ async function kkRemove(id, title) {
 async function kkSave() {
   const chats = (kkPending || []).filter((c) => c.messages.length);
   if (!chats.length) {
-    $('#kk-msg').textContent = '가져올 메시지가 없습니다. 카톡 내보내기(.txt) 또는 전체 내보내기(.json) 파일인지 확인하세요';
+    $('#kk-msg').textContent = '가져올 메시지가 없습니다. 카톡 내보내기(.txt, .zip) 또는 전체 내보내기(.json) 파일인지 확인하세요';
     return;
   }
   const typed = $('#kk-name').value.trim();
@@ -1114,13 +1128,20 @@ async function kkSave() {
     for (const c of chats) {
       const id = Date.now().toString(36) + '-' + n;
       const title = chats.length === 1 && typed ? typed : c.title;
-      const archive = { id, title, count: c.messages.length, imported_at: new Date().toISOString(), messages: c.messages };
+      const photos = n === 0 ? kkPendingPhotos : [];
+      const archive = {
+        id, title, count: c.messages.length, imported_at: new Date().toISOString(),
+        messages: c.messages,
+        photos: photos.map((p) => ({ name: p.name, size: p.size })),
+      };
       await E2EE.saveKV(kkKey(id), archive);
-      list = [{ id, title, count: archive.count }].concat(list);
+      for (let i = 0; i < photos.length; i++) await E2EE.saveKV(kkPhotoKey(id, i), photos[i].blob);
+      list = [{ id, title, count: archive.count, photos: photos.length }].concat(list);
       n += 1;
     }
     await E2EE.saveKV(kkIndexKey(), list);
     kkPending = null;
+    kkPendingPhotos = [];
     $('#kk-file').value = '';
     $('#kk-name').value = '';
     $('#kk-preview').textContent = '';
@@ -1130,6 +1151,14 @@ async function kkSave() {
     $('#kk-msg').textContent = '저장에 실패했습니다: ' + e.message;
   }
 }
+function kkRevokeGallery() {
+  for (const u of kkGalleryUrls) URL.revokeObjectURL(u);
+  kkGalleryUrls = [];
+  const g = $('#kkv-gallery');
+  g.innerHTML = '';
+  g.hidden = true;
+  $('#kkv-gallery-more').hidden = true;
+}
 async function openKakaoView(id) {
   let a = null;
   try {
@@ -1138,10 +1167,49 @@ async function openKakaoView(id) {
   if (!a) return alert('대화를 찾을 수 없습니다');
   kkArchive = a;
   kkShown = 300;
+  kkRevokeGallery();
+  const n = (a.photos || []).length;
+  $('#kkv-photos-btn').hidden = !n;
+  $('#kkv-photos-btn').textContent = '사진 모아 보기 (' + n + '장)';
   $('#kkv-title').textContent = a.title;
   $('#kkv-search').value = '';
   showView('kakaoview');
   renderKkView();
+}
+function toggleKkGallery() {
+  if (!kkArchive) return;
+  const n = kkArchive.photos.length;
+  if (!$('#kkv-gallery').hidden) {
+    kkRevokeGallery();
+    $('#kkv-photos-btn').textContent = '사진 모아 보기 (' + n + '장)';
+    return;
+  }
+  $('#kkv-gallery').hidden = false;
+  $('#kkv-photos-btn').textContent = '사진 닫기';
+  kkGalleryShown = 0;
+  showMoreKkPhotos();
+}
+function showMoreKkPhotos() {
+  const g = $('#kkv-gallery');
+  const list = kkArchive.photos;
+  const end = Math.min(list.length, kkGalleryShown + KK_GALLERY_PAGE);
+  for (let i = kkGalleryShown; i < end; i++) {
+    const img = document.createElement('img');
+    img.alt = list[i].name;
+    img.loading = 'lazy';
+    g.appendChild(img);
+    const archiveId = kkArchive.id;
+    E2EE.loadKV(kkPhotoKey(archiveId, i))
+      .then((blob) => {
+        if (!blob || !kkArchive || kkArchive.id !== archiveId) return;
+        const u = URL.createObjectURL(blob);
+        kkGalleryUrls.push(u);
+        img.src = u;
+      })
+      .catch(() => {});
+  }
+  kkGalleryShown = end;
+  $('#kkv-gallery-more').hidden = end >= list.length;
 }
 function renderKkView() {
   if (!kkArchive) return;
@@ -1174,16 +1242,36 @@ $('#kakaoimport-back').onclick = () => openMain('settings');
 $('#kk-file').onchange = async () => {
   const f = $('#kk-file').files[0];
   kkPending = null;
+  kkPendingPhotos = [];
   $('#kk-preview').textContent = '';
   $('#kk-msg').textContent = '';
   if (!f) return;
-  if (f.size > KK_MAX_BYTES) return ($('#kk-msg').textContent = '파일이 너무 큽니다 (30MB 이하)');
+  const isZip = /\.zip$/i.test(f.name);
+  if (isZip ? f.size > KK_MAX_ZIP : f.size > KK_MAX_BYTES) {
+    return ($('#kk-msg').textContent = isZip ? '압축 파일이 너무 큽니다 (300MB 이하)' : '파일이 너무 큽니다 (30MB 이하)');
+  }
   try {
-    const text = await f.text();
     let chats;
-    if (/\.json$/i.test(f.name)) {
+    let extra = '';
+    if (isZip) {
+      if (typeof JSZip === 'undefined') return ($('#kk-msg').textContent = '압축 풀이 도구를 불러오지 못했습니다. 인터넷 연결을 확인하세요');
+      const zip = await JSZip.loadAsync(f);
+      const entries = Object.values(zip.files).filter((e) => !e.dir && !e.name.startsWith('__MACOSX/') && !e.name.split('/').pop().startsWith('.'));
+      const txtEntry = entries.find((e) => /\.txt$/i.test(e.name));
+      if (!txtEntry) return ($('#kk-msg').textContent = '압축 파일 안에 대화 텍스트(.txt)가 없습니다');
+      const parsed = KakaoImport.parse(await txtEntry.async('string'));
+      if (!parsed.messages.length) return ($('#kk-msg').textContent = '카톡 대화 형식이 아닌 것 같습니다');
+      chats = [{ title: parsed.title, messages: parsed.messages }];
+      const imgs = entries.filter((e) => /\.(jpe?g|png|gif|webp|heic)$/i.test(e.name));
+      for (const e of imgs) {
+        const raw = await e.async('blob');
+        kkPendingPhotos.push({ name: e.name.split('/').pop(), size: raw.size, blob: new Blob([raw], { type: kkMime(e.name) }) });
+      }
+      const others = entries.length - imgs.length - 1;
+      extra = ' · 사진 ' + imgs.length + '장' + (others > 0 ? ' (영상·파일 ' + others + '개는 제외)' : '');
+    } else if (/\.json$/i.test(f.name)) {
       // 전체 데이터 내보내기 파일에 들어 있는 가져온 대화만 다시 불러옵니다
-      const data = JSON.parse(text);
+      const data = JSON.parse(await f.text());
       const src = Array.isArray(data && data.imported_chats) ? data.imported_chats : [];
       chats = src
         .filter((c) => c && Array.isArray(c.messages) && c.messages.length)
@@ -1193,7 +1281,7 @@ $('#kk-file').onchange = async () => {
         }));
       if (!chats.length) return ($('#kk-msg').textContent = '가져온 대화가 들어 있는 내보내기 파일이 아닙니다');
     } else {
-      const parsed = KakaoImport.parse(text);
+      const parsed = KakaoImport.parse(await f.text());
       if (!parsed.messages.length) return ($('#kk-msg').textContent = '카톡 대화 형식이 아닌 것 같습니다');
       chats = [{ title: parsed.title, messages: parsed.messages }];
     }
@@ -1204,15 +1292,18 @@ $('#kk-file').onchange = async () => {
     const last = new Date(lastMsgs[lastMsgs.length - 1].at).toLocaleDateString('ko-KR');
     const label = chats.length === 1 ? chats[0].title : chats.length + '개 대화';
     $('#kk-name').placeholder = chats.length === 1 ? chats[0].title : '여러 대화는 원래 이름으로 저장됩니다';
-    $('#kk-preview').textContent = label + ' · 메시지 ' + total + '개 · ' + first + ' ~ ' + last;
+    $('#kk-preview').textContent = label + ' · 메시지 ' + total + '개 · ' + first + ' ~ ' + last + extra;
   } catch (err) {
+    kkPendingPhotos = [];
     $('#kk-msg').textContent = '파일을 읽을 수 없습니다: ' + err.message;
   }
 };
 $('#kk-save').onclick = () => kkSave();
-$('#kakaoview-back').onclick = () => { showView('kakaoimport'); renderKkList(); };
+$('#kakaoview-back').onclick = () => { kkRevokeGallery(); showView('kakaoimport'); renderKkList(); };
 $('#kkv-search').oninput = () => { kkShown = 300; renderKkView(); };
 $('#kkv-more').onclick = () => { kkShown += 300; renderKkView(); };
+$('#kkv-photos-btn').onclick = () => toggleKkGallery();
+$('#kkv-gallery-more').onclick = () => showMoreKkPhotos();
 
 // 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
 async function handleFriendLink() {
