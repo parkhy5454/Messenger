@@ -62,19 +62,73 @@ async function sendCode(email, code) {
 }
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
-const issue = (u) => jwt.sign({ id: u.id, username: u.username }, JWT_SECRET, { expiresIn: '30d' });
+// 로그인 세션: 토큰(JWT)에 세션 id(sid)를 넣고, 세션이 취소되면 인증이 실패합니다
+function deviceName(ua) {
+  ua = String(ua || '');
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Macintosh/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '기기';
+  const br = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : '브라우저';
+  return br + ' · ' + os;
+}
+async function issueFor(u, req) {
+  const s = await pool.query('INSERT INTO sessions (user_id, device) VALUES ($1,$2) RETURNING id',
+    [u.id, deviceName(req && req.headers['user-agent'])]);
+  return jwt.sign({ id: u.id, username: u.username, sid: s.rows[0].id }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+// 2단계 인증 (TOTP, RFC 6238): 비밀키는 AES-256-GCM으로 암호화해서 저장
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function b32encode(buf) {
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) {
+    val = (val << 8) | b; bits += 8;
+    while (bits >= 5) { out += B32[(val >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32[(val << (5 - bits)) & 31];
+  return out;
+}
+function totpAt(secretBuf, counter) {
+  const c = Buffer.alloc(8);
+  c.writeBigUInt64BE(BigInt(counter));
+  const h = require('crypto').createHmac('sha1', secretBuf).update(c).digest();
+  const o = h[h.length - 1] & 15;
+  const code = (((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3]) % 1000000;
+  return String(code).padStart(6, '0');
+}
+function totpCheck(secretBuf, code) {
+  const t = Math.floor(Date.now() / 30000);
+  return [-1, 0, 1].some((d) => totpAt(secretBuf, t + d) === String(code || '').trim());
+}
+const TOTP_KEY = require('crypto').createHash('sha256').update(JWT_SECRET).digest();
+function encSecret(buf) {
+  const iv = require('crypto').randomBytes(12);
+  const c = require('crypto').createCipheriv('aes-256-gcm', TOTP_KEY, iv);
+  const ct = Buffer.concat([c.update(buf), c.final()]);
+  return [iv, c.getAuthTag(), ct].map((x) => x.toString('hex')).join(':');
+}
+function decSecret(s) {
+  const [iv, tag, ct] = String(s).split(':').map((x) => Buffer.from(x, 'hex'));
+  const d = require('crypto').createDecipheriv('aes-256-gcm', TOTP_KEY, iv);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]);
+}
+
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-function auth(req, res, next) {
+async function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const t = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!t) return res.status(401).json({ error: '로그인이 필요합니다' });
   try {
     req.user = jwt.verify(t, JWT_SECRET);
-    next();
+    if (req.user.sid) {
+      const r = await pool.query('SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND revoked=false', [req.user.sid, req.user.id]);
+      if (!r.rows[0]) return res.status(401).json({ error: '로그인이 만료되었습니다' });
+      pool.query('UPDATE sessions SET last_seen=now() WHERE id=$1', [req.user.sid]).catch(() => {});
+    }
   } catch {
-    res.status(401).json({ error: '로그인이 만료되었습니다' });
+    return res.status(401).json({ error: '로그인이 만료되었습니다' });
   }
+  next();
 }
 
 async function isBlocked(a, b) {
@@ -141,7 +195,7 @@ app.post('/api/auth/verify', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (re
 app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => 'login:' + req.ip + ':' + String((req.body || {}).username || '').toLowerCase() }), wrap(async (req, res) => {
   const { username, password } = req.body || {};
   const { rows } = await pool.query(
-    'SELECT id, username, password_hash, email_verified, banned FROM users WHERE username=$1',
+    'SELECT id, username, password_hash, email_verified, banned, totp_enabled FROM users WHERE username=$1',
     [String(username || '').toLowerCase()]
   );
   const u = rows[0];
@@ -150,7 +204,10 @@ app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req
   }
   if (!u.email_verified) return res.status(403).json({ error: '이메일 인증을 먼저 완료하세요' });
   if (u.banned) return res.status(403).json({ error: '이용이 제한된 계정입니다' });
-  res.json({ token: issue(u) });
+  if (u.totp_enabled) {
+    return res.json({ otp: true, pending: jwt.sign({ id: u.id, purpose: 'otp' }, JWT_SECRET, { expiresIn: '5m' }) });
+  }
+  res.json({ token: (await issueFor(u, req)) });
 }));
 
 // 카카오 로그인 (KAKAO_REST_KEY, KAKAO_REDIRECT_URI 설정 후 동작)
@@ -203,7 +260,7 @@ app.get('/api/auth/kakao/callback', wrap(async (req, res) => {
     }
     u = rows[0];
   }
-  res.redirect('/#token=' + issue(u));
+  res.redirect('/#token=' + (await issueFor(u, req)));
 }));
 
 // ---- 비밀번호 찾기 / 변경 ----
@@ -266,7 +323,7 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo, totp_enabled FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
@@ -481,6 +538,61 @@ app.post('/api/invites/:token/join', auth, wrap(async (req, res) => {
   if (rows[0].members >= 50) return res.status(400).json({ error: '그룹 인원이 가득 찼습니다' });
   await pool.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].group_id, req.user.id]);
   res.json({ id: rows[0].group_id });
+}));
+
+// ---- 2단계 인증 설정 ----
+app.post('/api/2fa/setup', auth, wrap(async (req, res) => {
+  const secret = require('crypto').randomBytes(20);
+  await pool.query('UPDATE users SET totp_secret=$2, totp_enabled=false WHERE id=$1', [req.user.id, encSecret(secret)]);
+  res.json({ secret: b32encode(secret) });
+}));
+app.post('/api/2fa/enable', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT totp_secret FROM users WHERE id=$1', [req.user.id]);
+  if (!rows[0] || !rows[0].totp_secret) return res.status(400).json({ error: '먼저 2단계 인증 설정을 시작하세요' });
+  if (!totpCheck(decSecret(rows[0].totp_secret), (req.body || {}).code)) return res.status(400).json({ error: '인증 코드가 올바르지 않습니다' });
+  await pool.query('UPDATE users SET totp_enabled=true WHERE id=$1', [req.user.id]);
+  res.json({ ok: true });
+}));
+app.post('/api/2fa/disable', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT password_hash FROM users WHERE id=$1', [req.user.id]);
+  if (!rows[0] || !(await bcrypt.compare(String((req.body || {}).password || ''), rows[0].password_hash || ''))) {
+    return res.status(400).json({ error: '비밀번호가 올바르지 않습니다' });
+  }
+  await pool.query('UPDATE users SET totp_enabled=false, totp_secret=NULL WHERE id=$1', [req.user.id]);
+  res.json({ ok: true });
+}));
+
+// 로그인 2단계: 비밀번호가 맞으면 임시 토큰을 주고, 인증 코드를 확인해서 로그인 토큰을 줍니다
+app.post('/api/auth/otp', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (req) => 'otp:' + req.ip }), wrap(async (req, res) => {
+  let p;
+  try {
+    p = jwt.verify(String((req.body || {}).pending || ''), JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: '인증 시간이 지났습니다. 다시 로그인하세요' });
+  }
+  if (p.purpose !== 'otp') return res.status(401).json({ error: '잘못된 요청입니다' });
+  const { rows } = await pool.query('SELECT id, username, totp_secret, banned FROM users WHERE id=$1 AND totp_enabled=true', [p.id]);
+  const u = rows[0];
+  if (!u || u.banned || !totpCheck(decSecret(u.totp_secret), (req.body || {}).code)) {
+    return res.status(401).json({ error: '인증 코드가 올바르지 않습니다' });
+  }
+  res.json({ token: await issueFor(u, req) });
+}));
+
+// ---- 기기 관리 ----
+app.get('/api/sessions', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, device, created_at, last_seen FROM sessions WHERE user_id=$1 AND revoked=false ORDER BY last_seen DESC',
+    [req.user.id]);
+  res.json(rows.map((r) => ({ ...r, current: r.id === req.user.sid })));
+}));
+app.delete('/api/sessions/:id', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE sessions SET revoked=true WHERE id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
+  res.json({ ok: true });
+}));
+app.post('/api/sessions/revoke-others', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE sessions SET revoked=true WHERE user_id=$1 AND id<>$2', [req.user.id, req.user.sid || 0]);
+  res.json({ ok: true });
 }));
 
 app.get('/api/blocks', auth, wrap(async (req, res) => {
@@ -899,13 +1011,17 @@ app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(async (req, res) => {
 const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1e5 });
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     socket.user = jwt.verify(socket.handshake.auth.token, JWT_SECRET);
-    next();
+    if (socket.user.sid) {
+      const r = await pool.query('SELECT 1 FROM sessions WHERE id=$1 AND revoked=false', [socket.user.sid]);
+      if (!r.rows[0]) throw new Error('revoked');
+    }
   } catch {
-    next(new Error('unauthorized'));
+    return next(new Error('unauthorized'));
   }
+  next();
 });
 
 io.on('connection', (socket) => {

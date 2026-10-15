@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -385,13 +385,31 @@ function setTab(t) {
   $('#auth-msg').textContent = '';
 }
 
+let pendingOtp = null;
 $('#login-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
+    if (pendingOtp) {
+      const r = await api('/api/auth/otp', { method: 'POST', body: JSON.stringify({ pending: pendingOtp, code: $('#li-otp').value.trim() }) });
+      pendingOtp = null;
+      $('#otp-row').hidden = true;
+      token = r.token;
+      localStorage.setItem('token', token);
+      pendingPassword = $('#li-pass').value;
+      await start();
+      return;
+    }
     const r = await api('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username: $('#li-user').value, password: $('#li-pass').value }),
     });
+    if (r.otp) {
+      pendingOtp = r.pending;
+      $('#otp-row').hidden = false;
+      $('#li-otp').focus();
+      $('#auth-msg').textContent = '인증 앱의 6자리 코드를 입력하세요';
+      return;
+    }
     token = r.token;
     localStorage.setItem('token', token);
     pendingPassword = $('#li-pass').value;
@@ -870,6 +888,72 @@ async function joinPendingInvite() {
     alert(err.message);
   }
 }
+
+// ---------- 보안 · 기기 관리 · 2단계 인증 ----------
+$('#btn-security').onclick = openSecurity;
+$('#security-back').onclick = () => openMain('settings');
+async function openSecurity() {
+  $('#security-msg').textContent = '';
+  $('#tfa-setup').hidden = true;
+  showView('security');
+  renderTfa();
+  await loadSessions().catch((err) => { $('#security-msg').textContent = err.message; });
+}
+function renderTfa() {
+  $('#tfa-state').textContent = me.totp_enabled ? '켜짐: 로그인할 때 인증 앱의 코드가 필요합니다.' : '꺼짐';
+  $('#btn-2fa').textContent = me.totp_enabled ? '2단계 인증 끄기' : '2단계 인증 켜기';
+}
+$('#btn-2fa').onclick = async () => {
+  try {
+    if (me.totp_enabled) {
+      const pw = prompt('2단계 인증을 끄려면 비밀번호를 입력하세요');
+      if (!pw) return;
+      await api('/api/2fa/disable', { method: 'POST', body: JSON.stringify({ password: pw }) });
+      me.totp_enabled = false;
+      renderTfa();
+      $('#security-msg').textContent = '2단계 인증을 껐습니다.';
+    } else {
+      const r = await api('/api/2fa/setup', { method: 'POST' });
+      $('#tfa-secret').textContent = r.secret;
+      $('#tfa-setup').hidden = false;
+    }
+  } catch (err) {
+    $('#security-msg').textContent = err.message;
+  }
+};
+$('#tfa-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/2fa/enable', { method: 'POST', body: JSON.stringify({ code: $('#tfa-code').value.trim() }) });
+    me.totp_enabled = true;
+    $('#tfa-setup').hidden = true;
+    $('#tfa-code').value = '';
+    renderTfa();
+    $('#security-msg').textContent = '2단계 인증을 켰습니다.';
+  } catch (err) {
+    $('#security-msg').textContent = err.message;
+  }
+};
+async function loadSessions() {
+  const list = await api('/api/sessions');
+  const ul = $('#sess-list');
+  ul.innerHTML = '';
+  for (const s of list) {
+    const li = document.createElement('li');
+    li.textContent = s.device + ' · 마지막 사용 ' + listTime(s.last_seen) + (s.current ? ' (이 기기)' : '');
+    if (!s.current) li.appendChild(btn('종료', async () => { await api('/api/sessions/' + s.id, { method: 'DELETE' }); await loadSessions(); }, 'link'));
+    ul.appendChild(li);
+  }
+}
+$('#btn-revoke-others').onclick = async () => {
+  if (!confirm('이 기기를 제외한 모든 기기에서 로그아웃할까요?')) return;
+  try {
+    await api('/api/sessions/revoke-others', { method: 'POST' });
+    await loadSessions();
+  } catch (err) {
+    $('#security-msg').textContent = err.message;
+  }
+};
 
 // ---------- 시작 / 소켓 ----------
 async function start() {

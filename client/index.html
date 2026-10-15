@@ -26,6 +26,7 @@
       <form id="login-form">
         <input id="li-user" placeholder="아이디" autocomplete="username" required />
         <input id="li-pass" type="password" placeholder="비밀번호" autocomplete="current-password" required />
+        <div id="otp-row" hidden><input id="li-otp" inputmode="numeric" maxlength="6" placeholder="2단계 인증 코드 (6자리)" autocomplete="one-time-code" /></div>
         <button type="submit" class="primary">로그인</button>
         <button id="go-forgot" class="link" type="button">비밀번호를 잊으셨나요?</button>
       </form>
@@ -103,6 +104,29 @@
       </form>
       <button id="profile-back" class="link" type="button">돌아가기</button>
       <p id="pf-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 보안 · 기기 관리 -->
+  <section id="view-security" class="view" hidden>
+    <div class="card">
+      <h1>보안 · 기기 관리</h1>
+      <h2>2단계 인증</h2>
+      <p id="tfa-state" class="muted"></p>
+      <button id="btn-2fa" class="ghost wide-btn" type="button"></button>
+      <div id="tfa-setup" hidden>
+        <p class="muted">인증 앱(Google Authenticator 등)에 아래 키를 직접 입력하고, 표시되는 6자리 코드를 입력하세요.</p>
+        <p id="tfa-secret" class="code"></p>
+        <form id="tfa-form">
+          <input id="tfa-code" inputmode="numeric" maxlength="6" placeholder="인증 코드" required />
+          <button type="submit" class="primary">켜기</button>
+        </form>
+      </div>
+      <h2>로그인한 기기</h2>
+      <ul id="sess-list" class="plain"></ul>
+      <button id="btn-revoke-others" class="ghost wide-btn" type="button">이 기기를 제외하고 모두 로그아웃</button>
+      <button id="security-back" class="link" type="button">돌아가기</button>
+      <p id="security-msg" class="msg-line"></p>
     </div>
   </section>
 
@@ -196,6 +220,7 @@
       <ul class="setting-list">
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
+        <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
         <li><button id="btn-blocks" class="ghost wide-btn" type="button">차단 목록</button></li>
         <li><button id="btn-avatar" class="ghost wide-btn" type="button">프로필 사진 바꾸기</button></li>
         <li><button id="btn-vis-photo" class="ghost wide-btn" type="button"></button></li>
