@@ -147,3 +147,9 @@ CREATE TABLE IF NOT EXISTS chat_prefs (
   receipts BOOLEAN NOT NULL,
   PRIMARY KEY (user_id, target_id, kind)
 );
+
+-- 프로필 공개 범위와 마지막 접속 시각
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_status_msg BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_online BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_last_seen BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ;

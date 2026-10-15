@@ -266,7 +266,7 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
@@ -383,6 +383,19 @@ app.post('/api/prefs/receipts', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// 프로필 공개 설정 (상태 메시지, 온라인 표시, 마지막 접속)
+app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const cols = { showStatus: 'show_status_msg', showOnline: 'show_online', showLastSeen: 'show_last_seen' };
+  const sets = [];
+  const vals = [req.user.id];
+  for (const k of Object.keys(cols)) {
+    if (typeof b[k] === 'boolean') { vals.push(b[k]); sets.push(cols[k] + '=$' + vals.length); }
+  }
+  if (sets.length) await pool.query('UPDATE users SET ' + sets.join(', ') + ' WHERE id=$1', vals);
+  res.json({ ok: true });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
@@ -440,12 +453,19 @@ async function acceptFriend(requesterId, myId) {
 
 app.get('/api/friends', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.name, u.status_msg FROM friendships f
+    `SELECT u.id, u.username, u.name, u.show_online, u.last_seen,
+       (CASE WHEN u.show_status_msg THEN u.status_msg ELSE NULL END) AS status_msg,
+       (CASE WHEN u.show_last_seen THEN u.last_seen ELSE NULL END) AS last_seen
+     FROM friendships f
      JOIN users u ON u.id = f.friend_id
      WHERE f.user_id=$1 AND f.status='accepted' ORDER BY u.name`,
     [req.user.id]
   );
-  res.json(rows);
+  // 온라인 표시: 공개 설정이 켜져 있고 지금 접속 중일 때만
+  res.json(rows.map((r) => ({
+    id: r.id, username: r.username, name: r.name, status_msg: r.status_msg, last_seen: r.last_seen,
+    online: !!(r.show_online && io.sockets.adapter.rooms.get('user:' + r.id)),
+  })));
 }));
 
 // 대화 목록: 친구별 1:1 대화와 그룹 대화의 마지막 메시지, 안 읽은 개수
@@ -802,6 +822,11 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const me = socket.user.id;
   socket.join('user:' + me);
+  socket.on('disconnect', () => {
+    // 마지막 접속 시각: 이 사용자의 연결이 모두 끊겼을 때만 기록
+    const room = io.sockets.adapter.rooms.get('user:' + me);
+    if (!room || room.size === 0) pool.query('UPDATE users SET last_seen=now() WHERE id=$1', [me]).catch(() => {});
+  });
 
   // 메시지 전송: { to, text, fileId } (1:1) 또는 { groupId, text, fileId } (그룹)
   socket.on('message:send', async (payload, ack) => {

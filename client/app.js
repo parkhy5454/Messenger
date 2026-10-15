@@ -741,6 +741,7 @@ async function enterMain() {
   renderMe();
   $('#btn-admin').hidden = !me.is_admin;
   renderReceiptsBtn();
+  renderVisBtns();
   await loadRequests();
   await loadList();
   connectSocket();
@@ -781,7 +782,8 @@ function renderFriends() {
     main.className = 'row-main';
     main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
     main.querySelector('.row-name').textContent = f.name;
-    main.querySelector('.row-sub').textContent = f.status_msg || '@' + f.username;
+    const prefix = f.online ? '온라인 · ' : (f.last_seen ? listTime(f.last_seen) + ' 접속 · ' : '');
+    main.querySelector('.row-sub').textContent = prefix + (f.status_msg || '@' + f.username);
     li.appendChild(main);
     li.onclick = () => openChat({ type: 'dm', id: f.id, name: f.name, username: f.username });
     ul.appendChild(li);
@@ -1196,6 +1198,28 @@ $('#btn-receipt').onclick = async () => {
 function renderReceiptsBtn() {
   $('#btn-receipts').textContent = '읽음 표시 보내기: ' + (me.receipts_on ? '켜짐' : '꺼짐');
 }
+// 프로필 공개 설정 (상태 메시지, 온라인 표시, 마지막 접속)
+const VIS = [
+  ['btn-vis-status', 'show_status_msg', 'showStatus', '상태 메시지 공개'],
+  ['btn-vis-online', 'show_online', 'showOnline', '온라인 표시'],
+  ['btn-vis-seen', 'show_last_seen', 'showLastSeen', '마지막 접속 공개'],
+];
+function renderVisBtns() {
+  for (const v of VIS) $('#' + v[0]).textContent = v[3] + ': ' + (me[v[1]] ? '켜짐' : '꺼짐');
+}
+for (const v of VIS) {
+  $('#' + v[0]).onclick = async () => {
+    const next = !me[v[1]];
+    try {
+      await api('/api/prefs/profile', { method: 'POST', body: JSON.stringify({ [v[2]]: next }) });
+      me[v[1]] = next;
+      renderVisBtns();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+}
+
 $('#btn-receipts').onclick = async () => {
   const next = !me.receipts_on;
   try {
