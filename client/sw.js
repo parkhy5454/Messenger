@@ -1,4 +1,4 @@
-const CACHE = 'messenger-v68';
+const CACHE = 'messenger-v69';
 const SHELL = ['/', '/index.html', '/style.css', '/e2ee.js', '/kakao.js', '/ics.js', '/vendor/jszip.min.js', '/app.js', '/manifest.json', '/icon-192.png'];
 
 self.addEventListener('install', (e) => {

@@ -392,3 +392,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .chat-filter button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 700; }
 .cf-n { color: #e5484d; font-weight: 700; }
 .chat-filter button.on .cf-n { color: #ffd0d1; }
+
+/* 대화 탭 머리글: 제목 + 새 대화 버튼 */
+#tab-chats .pane-head { display: flex; align-items: center; justify-content: space-between; }
+#btn-newchat { width: auto; padding: 6px 12px; font-size: 14px; }

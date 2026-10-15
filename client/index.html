@@ -453,13 +453,13 @@
         <p class="muted req-title">받은 친구 요청</p>
         <ul id="requests" class="friends"></ul>
       </div>
-      <button id="btn-newgroup" class="ghost wide-btn" type="button">+ 그룹 만들기</button>
       <ul id="friends" class="friends"></ul>
     </div>
 
     <!-- 대화 탭 -->
     <div id="tab-chats" class="pane" hidden>
-      <header class="pane-head"><strong>대화</strong></header>
+      <header class="pane-head"><strong>대화</strong><button id="btn-newchat" class="ghost" type="button">+ 새 대화</button></header>
+      <button id="btn-newgroup" hidden type="button"></button>
       <input id="search" class="search" placeholder="대화 검색" />
       <div id="chat-filter" class="chat-filter" role="tablist">
         <button type="button" data-f="all" class="on" role="tab">전체<span class="cf-n"></span></button>

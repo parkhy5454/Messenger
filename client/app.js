@@ -648,6 +648,14 @@ async function loadAdmin() {
   }
 }
 
+// ---------- 새 대화: 그룹 만들기 또는 친구와 1:1 대화 ----------
+$('#btn-newchat').onclick = () => {
+  openSheet([
+    ['👥 그룹 만들기', () => $('#btn-newgroup').click()],
+    ['💬 친구와 1:1 대화', () => document.querySelector('button[data-tab="friends"]').click()],
+  ]);
+};
+
 // ---------- 그룹 만들기 ----------
 $('#btn-newgroup').onclick = () => {
   $('#gr-name').value = '';
