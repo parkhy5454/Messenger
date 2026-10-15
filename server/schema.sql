@@ -354,3 +354,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_agreed_at TIMESTAMPTZ;
 
 -- 회원 탈퇴 시각 (탈퇴한 계정은 이름이 '탈퇴한 사용자'로 표시되고 로그인할 수 없음)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ;
+
+-- 대화방 고정 (사용자별, 최대 20개)
+CREATE TABLE IF NOT EXISTS chat_pins (
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('dm', 'group')),
+  target_id INT NOT NULL,
+  PRIMARY KEY (user_id, kind, target_id)
+);

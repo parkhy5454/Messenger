@@ -1847,6 +1847,7 @@ async function enterMain() {
   refreshPlanState().catch(() => {});
   handleBillingReturn();
   loadMutes().catch(() => {});
+  loadPins().catch(() => {});
   handleFriendLink().catch(() => {});
   handleApproveLink().catch(() => {});
   renderReceiptsBtn();
@@ -1980,6 +1981,9 @@ function renderList() {
   const items = chats
     .filter((c) => !q || c.name.toLowerCase().includes(q))
     .sort((a, b) => {
+      const pa = pinnedKeys.has(a.type + ':' + a.id) ? 1 : 0;
+      const pb = pinnedKeys.has(b.type + ':' + b.id) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
       const ta = a.last ? Date.parse(a.last.created_at) : 0;
       const tb = b.last ? Date.parse(b.last.created_at) : 0;
       return tb - ta;
@@ -2009,7 +2013,7 @@ function chatItem(c) {
   main.className = 'row-main';
   const name = document.createElement('div');
   name.className = 'row-name';
-  name.textContent = c.name;
+  name.textContent = (pinnedKeys.has(c.type + ':' + c.id) ? '📌 ' : '') + c.name;
   if (c.type === 'group') {
     const n = document.createElement('span');
     n.className = 'muted';
@@ -2062,6 +2066,7 @@ async function openChat(t) {
   $('#call-banner').hidden = true;
   $('#notice-banner').hidden = true;
   renderMuteBtn();
+  renderPinBtn();
   if (t.type === 'group') refreshBoard(t.id).catch(() => {});
   if (t.type === 'group') socket.emit('call:status', { groupId: t.id }, (r) => {
     if (r && !r.error) {
@@ -3192,6 +3197,36 @@ async function loadMutes() {
   mutedKeys.clear();
   for (const m of list) mutedKeys.add(m.kind + ':' + m.id);
 }
+
+// ===== 대화방 고정 =====
+const pinnedKeys = new Set(); // 'dm:12' 또는 'group:3'
+
+async function loadPins() {
+  const list = await api('/api/prefs/pins');
+  pinnedKeys.clear();
+  for (const p of list) pinnedKeys.add(p.kind + ':' + p.id);
+  renderList();
+}
+
+function renderPinBtn() {
+  if (!current) return;
+  $('#btn-pin').textContent = pinnedKeys.has(current.type + ':' + current.id) ? '고정 해제' : '고정';
+}
+
+$('#btn-pin').onclick = async () => {
+  if (!current) return;
+  const key = current.type + ':' + current.id;
+  const pinned = !pinnedKeys.has(key);
+  try {
+    await api('/api/prefs/pins', { method: 'PUT', body: JSON.stringify({ kind: current.type, id: current.id, pinned }) });
+    if (pinned) pinnedKeys.add(key);
+    else pinnedKeys.delete(key);
+    renderPinBtn();
+    renderList();
+  } catch (e) {
+    alert(e.message);
+  }
+};
 
 function renderMuteBtn() {
   if (!current) return;

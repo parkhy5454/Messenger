@@ -424,6 +424,7 @@ app.post('/api/me/withdraw', auth, wrap(async (req, res) => {
     await c.query('DELETE FROM group_reads WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM chat_prefs WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM muted_chats WHERE user_id=$1', [uid]);
+    await c.query('DELETE FROM chat_pins WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM push_subs WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM ai_messages WHERE user_id=$1', [uid]);
     await c.query('DELETE FROM scheduled_messages WHERE sender_id=$1', [uid]);
@@ -894,7 +895,32 @@ app.get('/api/prefs/mutes', auth, wrap(async (req, res) => {
   res.json(rows);
 }));
 
-// 대화방 알림 끄기/켜기. dm: 상대 사용자 id, group: 그룹 id
+// ===== 대화방 고정 =====
+app.get('/api/prefs/pins', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT kind, target_id AS id FROM chat_pins WHERE user_id=$1', [req.user.id]);
+  res.json(rows);
+}));
+
+// 대화방 고정/해제. dm: 상대 사용자 id, group: 그룹 id
+app.put('/api/prefs/pins', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const kind = b.kind;
+  const id = Number(b.id);
+  if ((kind !== 'dm' && kind !== 'group') || !id) return res.status(400).json({ error: '대화를 확인하세요' });
+  if (kind === 'group' && !(await isGroupMember(id, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  if (b.pinned) {
+    const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM chat_pins WHERE user_id=$1', [req.user.id]);
+    if (rows[0].n >= 20) return res.status(400).json({ error: '고정은 최대 20개까지 할 수 있습니다' });
+    await pool.query(
+      'INSERT INTO chat_pins (user_id, kind, target_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+      [req.user.id, kind, id]);
+  } else {
+    await pool.query('DELETE FROM chat_pins WHERE user_id=$1 AND kind=$2 AND target_id=$3', [req.user.id, kind, id]);
+  }
+  res.json({ ok: true });
+}));
+
+// ===== 방해 금지 시간 / 대화방 알림 끄기 =====
 app.put('/api/prefs/mutes', auth, wrap(async (req, res) => {
   const b = req.body || {};
   const kind = b.kind;
