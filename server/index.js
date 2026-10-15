@@ -1796,6 +1796,29 @@ app.post('/api/reports', auth, wrap(async (req, res) => {
 function searchLike(q) {
   return '%' + String(q).slice(0, 100).replace(/[\\%_]/g, '\\$&') + '%';
 }
+// 모든 대화 통합 검색: 내가 볼 수 있는 1:1 대화와 내가 속한 그룹의 평문 메시지를 최신순으로 찾습니다
+app.get('/api/search/all', auth, limit({ windowMs: 60 * 1000, max: 30, key: (req) => 'searchall:' + req.user.id }), wrap(async (req, res) => {
+  const me = req.user.id;
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json({ items: [], next: null });
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const { rows } = await pool.query(
+    "SELECT m.id, m.sender_id, su.name AS sender_name, m.text, m.created_at, m.group_id, g.name AS group_name, " +
+    "CASE WHEN m.sender_id = $1 THEN m.recipient_id ELSE m.sender_id END AS peer_id, " +
+    "(SELECT name FROM users WHERE id = CASE WHEN m.sender_id = $1 THEN m.recipient_id ELSE m.sender_id END) AS peer_name, " +
+    "(SELECT username FROM users WHERE id = CASE WHEN m.sender_id = $1 THEN m.recipient_id ELSE m.sender_id END) AS peer_username " +
+    "FROM messages m JOIN users su ON su.id = m.sender_id LEFT JOIN groups g ON g.id = m.group_id " +
+    "WHERE m.id < $2 AND m.enc = false AND m.kind = 'text' AND m.deleted = false " +
+    "AND (m.expires_at IS NULL OR m.expires_at > now()) AND m.text ILIKE $3 " +
+    "AND ((m.group_id IS NULL AND (m.sender_id = $1 OR m.recipient_id = $1)) " +
+    "  OR (m.group_id IS NOT NULL AND m.group_id IN (SELECT group_id FROM group_members WHERE user_id = $1))) " +
+    "ORDER BY m.id DESC LIMIT 31",
+    [me, before, searchLike(q)]
+  );
+  const items = rows.slice(0, 30);
+  res.json({ items, next: rows.length > 30 ? items[items.length - 1].id : null });
+}));
+
 app.get('/api/search/dm/:userId', auth, limit({ windowMs: 60 * 1000, max: 60, key: (req) => 'search:' + req.user.id }), wrap(async (req, res) => {
   const other = Number(req.params.userId);
   const me = req.user.id;

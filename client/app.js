@@ -2133,14 +2133,15 @@ function srvSearchRow(it, q) {
   const head = document.createElement('div');
   head.className = 'muted';
   const d = new Date(it.created_at);
-  head.textContent = it.sender_name + ' · ' + d.getFullYear() + '.' + (d.getMonth() + 1) + '.' + d.getDate();
+  const where = srvSearch && srvSearch.global ? (it.group_id ? it.group_name : it.peer_name) + ' · ' : '';
+  head.textContent = where + it.sender_name + ' · ' + d.getFullYear() + '.' + (d.getMonth() + 1) + '.' + d.getDate();
   const body = document.createElement('div');
   const text = String(it.text || '');
   const at = text.toLowerCase().indexOf(q.toLowerCase());
   const start = Math.max(0, at - 30);
   body.textContent = (start > 0 ? '…' : '') + text.slice(start, start + 100);
   row.append(head, body);
-  row.onclick = () => jumpToMessage(it.id);
+  row.onclick = () => (srvSearch && srvSearch.global ? openGlobalHit(it) : jumpToMessage(it.id));
   return row;
 }
 
@@ -2156,13 +2157,14 @@ async function fetchSrvPage() {
 }
 
 function searchBasePath() {
+  if (srvSearch && srvSearch.global) return '/api/search/all';
   return current.type === 'group' ? '/api/search/group/' + current.id : '/api/search/dm/' + current.id;
 }
 
 $('#msg-search-all').onclick = async () => {
   const q = $('#msg-search-input').value.trim();
   if (!q || !current) return;
-  srvSearch = { q, next: null, count: 0 };
+  srvSearch = { q, next: null, count: 0, global: false };
   $('#msg-search-list').innerHTML = '';
   $('#msg-search-results').hidden = false;
   $('#msg-search-note').textContent = chatMsgs.some((m) => m.enc) ? '암호화된 메시지는 서버에서 검색되지 않아 평문 메시지만 찾습니다' : '';
@@ -2172,6 +2174,29 @@ $('#msg-search-all').onclick = async () => {
     $('#msg-search-note').textContent = err.message;
   }
 };
+// 모든 대화 검색: 결과를 누르면 그 대화를 열고 메시지로 이동합니다
+async function openGlobalHit(it) {
+  const t = it.group_id
+    ? { type: 'group', id: it.group_id, name: it.group_name }
+    : { type: 'dm', id: it.peer_id, name: it.peer_name, username: it.peer_username };
+  await openChat(t);
+  await jumpToMessage(it.id);
+}
+
+$('#msg-search-global').onclick = async () => {
+  const q = $('#msg-search-input').value.trim();
+  if (!q) return;
+  srvSearch = { q, next: null, count: 0, global: true };
+  $('#msg-search-list').innerHTML = '';
+  $('#msg-search-results').hidden = false;
+  $('#msg-search-note').textContent = '';
+  try {
+    await fetchSrvPage();
+  } catch (err) {
+    $('#msg-search-note').textContent = err.message;
+  }
+};
+
 $('#msg-search-more').onclick = () => fetchSrvPage().catch((err) => { $('#msg-search-note').textContent = err.message; });
 
 // 검색 결과 메시지로 이동: 화면에 없으면 이전 기록을 차례로 불러옵니다 (최대 40쪽)
