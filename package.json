@@ -13,7 +13,7 @@
     "bcryptjs": "^2.4.3",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^10.1.1",
     "pg": "^8.13.1",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.1",
