@@ -1,8 +1,9 @@
 const $ = (s) => document.querySelector(s);
 let token = localStorage.getItem('token');
-let me = null, socket = null, current = null, oldestId = null;
+let me = null, socket = null, current = null, oldestId = null, chatMsgs = [];
 let pendingEmail = '', resetEmail = '';
-let friends = [], groups = [], unread = {};
+let friends = [], chats = [];
+let activeTab = 'friends';
 const blobCache = new Map();
 
 // 카카오 로그인 후 주소 뒤에 붙은 토큰을 저장하고 주소를 정리합니다.
@@ -13,43 +14,11 @@ if (tokenMatch) {
   history.replaceState(null, '', location.pathname);
 }
 
+// ---------- 공통 유틸 ----------
 const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
-
-// 하단 탭 (친구 / 대화 / 설정)
-let activeTab = 'friends';
-function showTab(name) {
-  activeTab = name;
-  for (const t of ['friends', 'chats', 'settings']) $('#tab-' + t).hidden = t !== name;
-  document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
-}
-function openMain(tab) {
-  showView('main');
-  showTab(tab || activeTab);
-}
-function setChatOpen(open) {
-  $('#view-main').classList.toggle('chat-open', open);
-}
-function renderMe() {
-  $('#me').textContent = me.name + ' (@' + me.username + ')';
-  $('#me-status').textContent = me.status_msg || '상태 메시지가 없습니다';
-}
-
-document.querySelectorAll('#tabbar button').forEach((b) => {
-  b.onclick = () => {
-    setChatOpen(false);
-    current = null;
-    showTab(b.dataset.tab);
-    if (b.dataset.tab === 'chats') renderList();
-  };
-});
-$('#chat-back').onclick = () => {
-  current = null;
-  setChatOpen(false);
-  renderList();
-};
 
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -79,6 +48,81 @@ function btn(label, fn, cls) {
   };
   return b;
 }
+
+// 이름 기반 색 아바타 (카카오톡처럼 사각 둥근 모서리)
+const AV_COLORS = ['#f28b82', '#fbbc04', '#34a853', '#4285f4', '#a142f4', '#00acc1', '#ff7043', '#8d6e63', '#5c6bc0', '#26a69a'];
+function avatarEl(name, cls) {
+  const s = String(name || '?').trim() || '?';
+  let h = 0;
+  for (const ch of s) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  const d = document.createElement('div');
+  d.className = 'av ' + (cls || '');
+  d.style.background = AV_COLORS[h % AV_COLORS.length];
+  d.textContent = s[0].toUpperCase();
+  return d;
+}
+
+function dayKey(iso) {
+  const d = new Date(iso);
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+function dateLabel(iso) {
+  const d = new Date(iso);
+  return d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
+}
+function timeLabel(iso) {
+  const d = new Date(iso);
+  const h = d.getHours();
+  return (h < 12 ? '오전 ' : '오후 ') + (h % 12 || 12) + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+// 목록용: 오늘이면 시간, 아니면 날짜
+function listTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), now = new Date();
+  if (dayKey(iso) === dayKey(now.toISOString())) return timeLabel(iso);
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+function previewOf(last) {
+  if (!last) return '';
+  if (last.kind === 'image') return '사진';
+  if (last.kind === 'file') return '파일';
+  return last.text || '';
+}
+
+// ---------- 화면 전환 ----------
+function showTab(name) {
+  activeTab = name;
+  for (const t of ['friends', 'chats', 'settings']) $('#tab-' + t).hidden = t !== name;
+  document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+}
+function openMain(tab) {
+  showView('main');
+  showTab(tab || activeTab);
+}
+function setChatOpen(open) {
+  $('#view-main').classList.toggle('chat-open', open);
+}
+function renderMe() {
+  $('#me').textContent = me.name;
+  $('#me-status').textContent = (me.status_msg ? me.status_msg : '@' + me.username);
+  const av = $('#me-av');
+  av.innerHTML = '';
+  av.appendChild(avatarEl(me.name, 'lg'));
+}
+
+document.querySelectorAll('#tabbar button').forEach((b) => {
+  b.onclick = () => {
+    setChatOpen(false);
+    current = null;
+    showTab(b.dataset.tab);
+    if (b.dataset.tab === 'chats') renderList();
+  };
+});
+$('#chat-back').onclick = () => {
+  current = null;
+  setChatOpen(false);
+  renderList();
+};
 
 // ---------- 로그인 / 회원가입 / 인증 ----------
 $('#tab-login').onclick = () => { $('#login-form').hidden = false; $('#signup-form').hidden = true; setTab('login'); };
@@ -290,7 +334,7 @@ $('#btn-newgroup').onclick = () => {
     const c = document.createElement('input');
     c.type = 'checkbox';
     c.value = f.id;
-    l.append(c, ' ' + f.name + '  @' + f.username);
+    l.append(c, f.name + '  @' + f.username);
     box.appendChild(l);
   }
   showView('group');
@@ -311,7 +355,7 @@ $('#gr-form').onsubmit = async (e) => {
   }
 };
 
-// ---------- 메인: 목록 ----------
+// ---------- 시작 / 소켓 ----------
 async function start() {
   try {
     me = await api('/api/me');
@@ -324,7 +368,6 @@ async function start() {
   $('#btn-admin').hidden = !me.is_admin;
   await loadRequests();
   await loadList();
-  await loadUnread();
   connectSocket();
 }
 
@@ -338,74 +381,38 @@ function connectSocket() {
   });
 }
 
+// 친구 목록과 대화 목록(마지막 메시지, 안 읽은 수)을 함께 불러옵니다
 async function loadList() {
-  [friends, groups] = await Promise.all([api('/api/friends'), api('/api/groups')]);
+  [friends, chats] = await Promise.all([api('/api/friends'), api('/api/chats')]);
   renderFriends();
   renderList();
 }
 
-async function loadUnread() {
-  const rows = await api('/api/unread');
-  unread = {};
-  for (const r of rows) unread[r.sender_id] = r.count;
-  renderList();
-}
-
-// 친구 탭: 친구 목록
+// ---------- 친구 탭 ----------
 function renderFriends() {
   const q = $('#fsearch').value.trim().toLowerCase();
   const ul = $('#friends');
   ul.innerHTML = '';
   for (const f of friends) {
     if (q && !(f.name + f.username).toLowerCase().includes(q)) continue;
-    ul.appendChild(listItem({ type: 'dm', id: f.id, name: f.name, username: f.username }, 0));
+    const li = document.createElement('li');
+    li.appendChild(avatarEl(f.name));
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
+    main.querySelector('.row-name').textContent = f.name;
+    main.querySelector('.row-sub').textContent = f.status_msg || '@' + f.username;
+    li.appendChild(main);
+    li.onclick = () => openChat({ type: 'dm', id: f.id, name: f.name, username: f.username });
+    ul.appendChild(li);
   }
-  if (!ul.children.length) ul.innerHTML = '<li class="muted">친구가 없습니다. 위에서 아이디로 친구를 추가하세요.</li>';
+  if (!ul.children.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '친구가 없습니다. 위에서 아이디로 친구를 추가하세요.';
+    ul.appendChild(li);
+  }
 }
-
-// 대화 탭: 그룹 + 친구 대화 (안 읽은 메시지가 많은 순)
-function renderList() {
-  const q = $('#search').value.trim().toLowerCase();
-  const ul = $('#list');
-  ul.innerHTML = '';
-  const match = (s) => !q || s.toLowerCase().includes(q);
-  for (const g of groups) {
-    if (!match(g.name)) continue;
-    const t = { type: 'group', id: g.id, name: g.name, count: g.members ? g.members.length : 0 };
-    ul.appendChild(listItem(t, 0));
-  }
-  const dms = friends
-    .filter((f) => match(f.name + f.username))
-    .sort((a, b) => (unread[b.id] || 0) - (unread[a.id] || 0));
-  for (const f of dms) {
-    ul.appendChild(listItem({ type: 'dm', id: f.id, name: f.name, username: f.username }, unread[f.id] || 0));
-  }
-  if (!ul.children.length) ul.innerHTML = '<li class="muted">대화가 없습니다. 친구 탭에서 친구를 추가하세요.</li>';
-
-  // 하단 탭의 "대화" 뱃지: 안 읽은 메시지 총합
-  const total = Object.values(unread).reduce((a, b) => a + b, 0);
-  const badge = $('#chat-badge');
-  badge.hidden = !total;
-  badge.textContent = total > 99 ? '99+' : String(total);
-}
-
-function listItem(t, badge) {
-  const li = document.createElement('li');
-  if (current && current.type === t.type && current.id === t.id) li.classList.add('on');
-  const label = document.createElement('span');
-  label.textContent = t.type === 'group' ? '👥 ' + t.name + ' (' + t.count + '명)' : t.name + '  @' + t.username;
-  li.appendChild(label);
-  if (badge) {
-    const b = document.createElement('b');
-    b.className = 'badge';
-    b.textContent = badge;
-    li.appendChild(b);
-  }
-  li.onclick = () => openChat(t);
-  return li;
-}
-
-$('#search').oninput = renderList;
 $('#fsearch').oninput = renderFriends;
 
 // 받은 친구 요청 (수락 / 거절)
@@ -416,7 +423,13 @@ async function loadRequests() {
   $('#req-box').hidden = list.length === 0;
   for (const r of list) {
     const li = document.createElement('li');
-    li.textContent = r.name + '  @' + r.username + ' ';
+    li.appendChild(avatarEl(r.name));
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
+    main.querySelector('.row-name').textContent = r.name;
+    main.querySelector('.row-sub').textContent = '@' + r.username + ' · 친구 요청';
+    li.appendChild(main);
     li.appendChild(btn('수락', async () => {
       await api('/api/friends/accept', { method: 'POST', body: JSON.stringify({ userId: r.id }) });
       await loadRequests();
@@ -442,7 +455,79 @@ $('#add-form').onsubmit = async (e) => {
   }
 };
 
-// ---------- 채팅 ----------
+// ---------- 대화 탭 ----------
+function renderList() {
+  const q = $('#search').value.trim().toLowerCase();
+  const ul = $('#list');
+  ul.innerHTML = '';
+  const items = chats
+    .filter((c) => !q || c.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const ta = a.last ? Date.parse(a.last.created_at) : 0;
+      const tb = b.last ? Date.parse(b.last.created_at) : 0;
+      return tb - ta;
+    });
+  for (const c of items) ul.appendChild(chatItem(c));
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = '대화가 없습니다. 친구 탭에서 친구를 추가하세요.';
+    ul.appendChild(li);
+  }
+
+  // 하단 탭의 "대화" 뱃지: 안 읽은 1:1 메시지 총합
+  const total = chats.reduce((sum, c) => sum + (c.type === 'dm' ? c.unread || 0 : 0), 0);
+  const badge = $('#chat-badge');
+  badge.hidden = !total;
+  badge.textContent = total > 99 ? '99+' : String(total);
+}
+$('#search').oninput = renderList;
+
+function chatItem(c) {
+  const li = document.createElement('li');
+  li.onclick = () => openChat({ type: c.type, id: c.id, name: c.name, username: c.username });
+  li.appendChild(avatarEl(c.name));
+
+  const main = document.createElement('div');
+  main.className = 'row-main';
+  const name = document.createElement('div');
+  name.className = 'row-name';
+  name.textContent = c.name;
+  if (c.type === 'group') {
+    const n = document.createElement('span');
+    n.className = 'muted';
+    n.style.marginLeft = '6px';
+    n.style.fontSize = '12px';
+    n.textContent = c.members + '명';
+    name.appendChild(n);
+  }
+  const sub = document.createElement('div');
+  sub.className = 'row-sub';
+  let previewText = previewOf(c.last);
+  if (c.type === 'group' && c.last && c.last.sender_name && c.last.kind !== 'image') {
+    previewText = c.last.sender_name + ': ' + previewText;
+  }
+  sub.textContent = previewText;
+  main.append(name, sub);
+  li.appendChild(main);
+
+  const side = document.createElement('div');
+  side.className = 'row-side';
+  const time = document.createElement('div');
+  time.className = 'row-time';
+  time.textContent = c.last ? listTime(c.last.created_at) : '';
+  side.appendChild(time);
+  if (c.type === 'dm' && c.unread) {
+    const b = document.createElement('b');
+    b.className = 'badge';
+    b.textContent = c.unread > 99 ? '99+' : c.unread;
+    side.appendChild(b);
+  }
+  li.appendChild(side);
+  return li;
+}
+
+// ---------- 채팅 화면 ----------
 function isCurrent(t) {
   return current && current.type === t.type && current.id === t.id;
 }
@@ -450,8 +535,9 @@ function isCurrent(t) {
 async function openChat(t) {
   current = t;
   oldestId = null;
+  chatMsgs = [];
   setChatOpen(true);
-  $('#chat-title').textContent = t.type === 'group' ? '👥 ' + t.name : t.name + '  @' + t.username;
+  $('#chat-title').textContent = t.name;
   $('#dm-actions').hidden = t.type !== 'dm';
   $('#group-actions').hidden = t.type !== 'group';
   $('#compose').hidden = false;
@@ -459,9 +545,8 @@ async function openChat(t) {
   await loadMessages(true);
   if (t.type === 'dm') {
     socket.emit('read:dm', { userId: t.id });
-    unread[t.id] = 0;
-    renderList();
-  } else {
+    const c = chats.find((x) => x.type === 'dm' && x.id === t.id);
+    if (c) c.unread = 0;
     renderList();
   }
   $('#msg-input').focus();
@@ -475,40 +560,80 @@ function historyPath(t, before) {
 // 처음에는 최근 메시지, "더 보기"는 이전 메시지를 위에 붙입니다
 async function loadMessages(initial) {
   const rows = await api(historyPath(current, oldestId));
-  const box = $('#chat-box');
-  const frag = document.createDocumentFragment();
-  for (const m of rows) frag.appendChild(makeMsg(m));
   if (rows.length) oldestId = rows[0].id;
   $('#more').hidden = rows.length < 50;
-  if (initial) {
-    box.innerHTML = '';
-    box.appendChild(frag);
-    box.scrollTop = box.scrollHeight;
-  } else {
-    const prev = box.scrollHeight;
-    box.insertBefore(frag, box.firstChild);
-    box.scrollTop = box.scrollHeight - prev;
-  }
+  chatMsgs = initial ? rows : rows.concat(chatMsgs);
+  renderChat(initial ? 'bottom' : 'keep');
 }
-
 $('#more').onclick = () => loadMessages(false);
 
-function makeMsg(m) {
+function renderChat(mode) {
+  const box = $('#chat-box');
+  const prevH = box.scrollHeight, prevTop = box.scrollTop;
+  box.innerHTML = '';
+  box.appendChild(buildMsgs(chatMsgs, null));
+  if (mode === 'bottom') box.scrollTop = box.scrollHeight;
+  else box.scrollTop = prevTop + (box.scrollHeight - prevH);
+}
+
+// 날짜 구분선과 같은 사람 연속 메시지(아바타 생략)를 처리해서 조각(fragment)을 만듭니다
+function buildMsgs(list, prev) {
+  const frag = document.createDocumentFragment();
+  for (const m of list) {
+    const day = dayKey(m.created_at);
+    const sameDay = !!prev && prev.day === day;
+    if (!sameDay) {
+      const sep = document.createElement('div');
+      sep.className = 'day-sep';
+      const sp = document.createElement('span');
+      sp.textContent = dateLabel(m.created_at);
+      sep.appendChild(sp);
+      frag.appendChild(sep);
+    }
+    const cont = sameDay && prev.sender_id === m.sender_id;
+    frag.appendChild(makeMsg(m, cont));
+    prev = { sender_id: m.sender_id, day };
+  }
+  return frag;
+}
+
+function appendMsg(m) {
+  const last = chatMsgs[chatMsgs.length - 1];
+  chatMsgs.push(m);
+  const prev = last ? { sender_id: last.sender_id, day: dayKey(last.created_at) } : null;
+  const box = $('#chat-box');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  box.appendChild(buildMsgs([m], prev));
+  if (atBottom || m.sender_id === me.id) box.scrollTop = box.scrollHeight;
+}
+
+function makeMsg(m, cont) {
   const mine = m.sender_id === me.id;
   const row = document.createElement('div');
-  row.className = 'msg-row ' + (mine ? 'me' : 'them');
+  row.className = 'msg-row ' + (mine ? 'me' : 'them') + (cont ? ' cont' : ' first');
   row.dataset.id = m.id;
 
-  if (!mine && current && current.type === 'group' && m.sender_name) {
+  if (!mine) {
+    const slot = document.createElement('div');
+    slot.className = 'av-slot';
+    if (!cont) slot.appendChild(avatarEl(m.sender_name || (current ? current.name : '?'), 'sm'));
+    row.appendChild(slot);
+  }
+
+  const col = document.createElement('div');
+  col.className = 'col';
+  if (!mine && !cont && current && current.type === 'group' && m.sender_name) {
     const who = document.createElement('div');
     who.className = 'sender';
     who.textContent = m.sender_name;
-    row.appendChild(who);
+    col.appendChild(who);
   }
+
+  const line = document.createElement('div');
+  line.className = 'line';
 
   const bubble = document.createElement('div');
   bubble.className = 'msg ' + (mine ? 'me' : 'them');
-
   if (m.kind === 'image' && m.file_id) {
     const img = document.createElement('img');
     img.className = 'thumb';
@@ -531,20 +656,29 @@ function makeMsg(m) {
     };
     bubble.appendChild(a);
   }
-
   if (m.text) {
     const t = document.createElement('div');
     t.textContent = m.text;
     bubble.appendChild(t);
   }
-  row.appendChild(bubble);
 
+  // 메타: 1:1에서 내 메시지는 "1"(안 읽음) 표시, 시간
+  const meta = document.createElement('div');
+  meta.className = 'meta';
   if (mine && current && current.type === 'dm') {
-    const r = document.createElement('div');
+    const r = document.createElement('span');
     r.className = 'read';
-    r.textContent = m.read_at ? '읽음' : '';
-    row.appendChild(r);
+    r.textContent = m.read_at ? '' : '1';
+    meta.appendChild(r);
   }
+  const tm = document.createElement('span');
+  tm.textContent = timeLabel(m.created_at);
+  meta.appendChild(tm);
+
+  if (mine) line.append(meta, bubble);
+  else line.append(bubble, meta);
+  col.appendChild(line);
+  row.appendChild(col);
   return row;
 }
 
@@ -589,6 +723,7 @@ $('#attach').onchange = async (e) => {
   }
 };
 
+// 새 메시지 수신: 열린 대화면 말풍선 추가, 아니면 대화 목록과 뱃지 갱신
 function onMessage(m) {
   const isGroupMsg = !!m.group_id;
   const relevant = current && (isGroupMsg
@@ -596,23 +731,27 @@ function onMessage(m) {
     : current.type === 'dm' && (m.sender_id === current.id || m.recipient_id === current.id));
 
   if (relevant) {
-    const box = $('#chat-box');
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    box.appendChild(makeMsg(m));
-    if (atBottom || m.sender_id === me.id) box.scrollTop = box.scrollHeight;
+    appendMsg(m);
     if (!isGroupMsg && m.sender_id === current.id) socket.emit('read:dm', { userId: current.id });
-  } else if (!isGroupMsg && m.recipient_id === me.id) {
-    unread[m.sender_id] = (unread[m.sender_id] || 0) + 1;
+  }
+
+  const other = isGroupMsg ? null : (m.sender_id === me.id ? m.recipient_id : m.sender_id);
+  const c = chats.find((x) => (isGroupMsg ? x.type === 'group' && x.id === m.group_id : x.type === 'dm' && x.id === other));
+  if (c) {
+    c.last = { text: m.text, kind: m.kind, created_at: m.created_at, sender_name: m.sender_name };
+    if (!isGroupMsg && m.sender_id !== me.id && !relevant) c.unread = (c.unread || 0) + 1;
     renderList();
   }
 }
 
-// 상대가 내 메시지를 읽으면 "읽음" 표시
+// 상대가 내 메시지를 읽으면 "1" 표시를 지웁니다
 function onRead({ by, ids }) {
   if (!current || current.type !== 'dm' || current.id !== by) return;
+  const now = new Date().toISOString();
+  for (const m of chatMsgs) if (ids.includes(m.id)) m.read_at = now;
   for (const id of ids) {
     const r = document.querySelector('.msg-row[data-id="' + id + '"] .read');
-    if (r) r.textContent = '읽음';
+    if (r) r.textContent = '';
   }
 }
 
@@ -621,12 +760,8 @@ $('#btn-block').onclick = async () => {
   try {
     await api('/api/blocks', { method: 'POST', body: JSON.stringify({ userId: current.id }) });
     current = null;
+    setChatOpen(false);
     $('#chat-box').innerHTML = '';
-    $('#chat-title').textContent = '차단되었습니다';
-    $('#dm-actions').hidden = true;
-    $('#group-actions').hidden = true;
-    $('#compose').hidden = true;
-    $('#more').hidden = true;
     await loadList();
   } catch (err) {
     alert(err.message);
@@ -668,10 +803,6 @@ $('#btn-gleave').onclick = async () => {
     current = null;
     setChatOpen(false);
     $('#chat-box').innerHTML = '';
-    $('#chat-title').textContent = '대화를 선택하세요';
-    $('#group-actions').hidden = true;
-    $('#compose').hidden = true;
-    $('#more').hidden = true;
     await loadList();
   } catch (err) {
     alert(err.message);

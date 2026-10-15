@@ -3,7 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#2f6fed" />
+  <meta name="theme-color" content="#ffffff" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="메신저" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="apple-touch-icon" href="/icon.png" />
   <title>메신저</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="stylesheet" href="/style.css" />
@@ -165,8 +170,11 @@
     <div id="tab-settings" class="pane" hidden>
       <header class="pane-head"><strong>설정</strong></header>
       <div class="me-card">
-        <strong id="me"></strong>
-        <p id="me-status" class="muted"></p>
+        <div id="me-av"></div>
+        <div>
+          <div id="me" class="me-name"></div>
+          <div id="me-status" class="me-sub"></div>
+        </div>
       </div>
       <ul class="setting-list">
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>

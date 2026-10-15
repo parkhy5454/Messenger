@@ -337,9 +337,38 @@ async function acceptFriend(requesterId, myId) {
 
 app.get('/api/friends', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.name FROM friendships f
+    `SELECT u.id, u.username, u.name, u.status_msg FROM friendships f
      JOIN users u ON u.id = f.friend_id
      WHERE f.user_id=$1 AND f.status='accepted' ORDER BY u.name`,
+    [req.user.id]
+  );
+  res.json(rows);
+}));
+
+// 대화 목록: 친구별 1:1 대화와 그룹 대화의 마지막 메시지, 안 읽은 개수
+app.get('/api/chats', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `WITH dm AS (
+       SELECT 'dm'::text AS type, f.friend_id AS id, u.name, u.username, 0 AS members,
+         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at)
+            FROM messages m
+            WHERE (m.sender_id=$1 AND m.recipient_id=f.friend_id) OR (m.sender_id=f.friend_id AND m.recipient_id=$1)
+            ORDER BY m.id DESC LIMIT 1) AS last,
+         (SELECT COUNT(*)::int FROM messages m
+            WHERE m.sender_id=f.friend_id AND m.recipient_id=$1 AND m.read_at IS NULL) AS unread
+       FROM friendships f JOIN users u ON u.id = f.friend_id
+       WHERE f.user_id=$1 AND f.status='accepted'
+     ),
+     grp AS (
+       SELECT 'group'::text AS type, g.id, g.name, ''::text AS username,
+         (SELECT COUNT(*)::int FROM group_members x WHERE x.group_id = g.id) AS members,
+         (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at, 'sender_name', su.name)
+            FROM messages m JOIN users su ON su.id = m.sender_id
+            WHERE m.group_id = g.id ORDER BY m.id DESC LIMIT 1) AS last,
+         0 AS unread
+       FROM groups g JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $1
+     )
+     SELECT * FROM dm UNION ALL SELECT * FROM grp`,
     [req.user.id]
   );
   res.json(rows);
