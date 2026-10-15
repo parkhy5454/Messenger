@@ -250,8 +250,8 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .qr { width: 220px; max-width: 100%; display: block; margin: 8px auto; image-rendering: pixelated; }
 
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-.rx { background: #fff; border: 1px solid #ddd; border-radius: 12px; padding: 1px 6px; font-size: 12px; cursor: pointer; }
-.rx.mine { border-color: #fee500; background: #fff9c4; }
+.rx { background: #fff; color: #222; border: 1px solid #ddd; border-radius: 12px; padding: 1px 6px; font-size: 12px; cursor: pointer; }
+.rx.mine { border-color: #fee500; background: #fff9c4; color: #222; }
 
 #sched-dialog { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; z-index: 55; }
 #sched-dialog[hidden] { display: none; }
