@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -1204,6 +1204,15 @@ function renderFriends() {
     const prefix = f.online ? '온라인 · ' : (f.last_seen ? listTime(f.last_seen) + ' 접속 · ' : '');
     main.querySelector('.row-sub').textContent = prefix + (f.status_msg || '@' + f.username);
     li.appendChild(main);
+    const pbtn = document.createElement('button');
+    pbtn.type = 'button';
+    pbtn.className = 'ghost small-btn';
+    pbtn.textContent = '프로필';
+    pbtn.onclick = (e) => {
+      e.stopPropagation();
+      openFriendProfilePick(f);
+    };
+    li.appendChild(pbtn);
     li.onclick = () => openChat({ type: 'dm', id: f.id, name: f.name, username: f.username });
     ul.appendChild(li);
   }
@@ -2060,3 +2069,134 @@ async function loadStats() {
 }
 $('#stats-refresh').onclick = () => loadStats().catch((e) => alert(e.message));
 setInterval(() => loadStats().catch(() => {}), 15000);
+
+// ===== 멀티 프로필 =====
+let editingProfileId = null;
+
+function resetProfileForm() {
+  editingProfileId = null;
+  $('#pf-name').value = '';
+  $('#pf-status').value = '';
+  $('#pf-photo').value = '';
+  $('#pf-form-title').textContent = '새 프로필';
+}
+
+async function openProfiles() {
+  $('#pf-msg').textContent = '';
+  resetProfileForm();
+  showView('profiles');
+  await renderProfileList().catch((e) => { $('#pf-msg').textContent = e.message; });
+}
+$('#btn-profiles').onclick = () => openProfiles();
+$('#pf-back').onclick = () => openMain('settings');
+$('#pf-reset').onclick = () => {
+  resetProfileForm();
+  $('#pf-msg').textContent = '';
+};
+
+async function renderProfileList() {
+  const list = await api('/api/profiles');
+  const ul = $('#pf-list');
+  ul.innerHTML = '';
+  const base = document.createElement('li');
+  base.className = 'pf-item';
+  base.innerHTML = '<div class="row-main"><div class="row-name"></div><div class="row-sub">기본 프로필 · 설정의 프로필 편집에서 바꿉니다</div></div>';
+  base.querySelector('.row-name').textContent = me.name;
+  ul.appendChild(base);
+  for (const p of list) {
+    const li = document.createElement('li');
+    li.className = 'pf-item';
+    const main = document.createElement('div');
+    main.className = 'row-main';
+    main.innerHTML = '<div class="row-name"></div><div class="row-sub"></div>';
+    main.querySelector('.row-name').textContent = p.name;
+    main.querySelector('.row-sub').textContent = (p.status_msg || '상태 메시지 없음') + (p.has_photo ? ' · 사진 있음' : '');
+    main.onclick = () => {
+      editingProfileId = p.id;
+      $('#pf-name').value = p.name;
+      $('#pf-status').value = p.status_msg || '';
+      $('#pf-photo').value = '';
+      $('#pf-form-title').textContent = '프로필 수정';
+      $('#pf-msg').textContent = '';
+    };
+    li.appendChild(main);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'ghost small-btn';
+    del.textContent = '삭제';
+    del.onclick = async () => {
+      if (!confirm('이 프로필을 삭제할까요? 이 프로필을 쓰던 친구는 기본 프로필이 보입니다.')) return;
+      try {
+        await api('/api/profiles/' + p.id, { method: 'DELETE' });
+        if (editingProfileId === p.id) resetProfileForm();
+        await renderProfileList();
+        await loadList();
+      } catch (e) {
+        $('#pf-msg').textContent = e.message;
+      }
+    };
+    li.appendChild(del);
+    ul.appendChild(li);
+  }
+  if (list.length >= 5) $('#pf-msg').textContent = '프로필은 최대 5개까지 만들 수 있습니다.';
+}
+
+async function uploadProfilePhoto(pid, file) {
+  const blob = await resizeImage(file);
+  const r = await fetch('/api/files', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'image/jpeg', 'X-File-Name': encodeURIComponent('profile.jpg') },
+    body: blob,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || '사진 업로드에 실패했습니다');
+  await api('/api/profiles/' + pid + '/avatar', { method: 'POST', body: JSON.stringify({ fileId: j.id }) });
+}
+
+$('#pf-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('#pf-name').value.trim();
+  const statusMsg = $('#pf-status').value.trim();
+  const photo = $('#pf-photo').files[0];
+  try {
+    let id = editingProfileId;
+    if (id) {
+      await api('/api/profiles/' + id, { method: 'PATCH', body: JSON.stringify({ name, statusMsg }) });
+    } else {
+      const r = await api('/api/profiles', { method: 'POST', body: JSON.stringify({ name, statusMsg }) });
+      id = r.id;
+    }
+    if (photo) await uploadProfilePhoto(id, photo);
+    resetProfileForm();
+    $('#pf-msg').textContent = '저장했습니다.';
+    await renderProfileList();
+    await loadList();
+  } catch (err) {
+    $('#pf-msg').textContent = err.message;
+  }
+};
+
+// 친구별 프로필 선택 (친구 목록의 '프로필' 버튼)
+async function openFriendProfilePick(f) {
+  try {
+    const [profiles, assigns] = await Promise.all([api('/api/profiles'), api('/api/profiles/assign')]);
+    const a = assigns.find((x) => x.viewer_id === f.id);
+    const curId = a ? a.profile_id : null;
+    const items = [[(curId == null ? '✓ ' : '') + '기본 프로필', () => setFriendProfile(f, null)]];
+    for (const p of profiles) items.push([(curId === p.id ? '✓ ' : '') + p.name, () => setFriendProfile(f, p.id)]);
+    if (!profiles.length) items.push(['프로필 만들기 (설정 › 프로필 관리)', () => openProfiles()]);
+    openSheet(items);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function setFriendProfile(f, profileId) {
+  try {
+    await api('/api/profiles/assign/' + f.id, { method: 'PUT', body: JSON.stringify({ profileId }) });
+    avatarCache.delete(f.id);
+    await loadList();
+  } catch (e) {
+    alert(e.message);
+  }
+}

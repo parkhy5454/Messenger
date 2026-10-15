@@ -453,6 +453,86 @@ app.post('/api/prefs/profile', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
+// 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
+const PROFILE_MAX = 5;
+function validProfile(body) {
+  const name = String((body || {}).name || '').trim();
+  const statusMsg = String((body || {}).statusMsg || '').trim();
+  if (!name || name.length > 20) return { error: '프로필 이름은 1~20자로 입력하세요' };
+  if (statusMsg.length > 60) return { error: '상태 메시지는 60자 이내로 입력하세요' };
+  return { name, statusMsg };
+}
+
+app.get('/api/profiles', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, status_msg, avatar_file_id FROM profiles WHERE user_id=$1 ORDER BY id', [req.user.id]);
+  res.json(rows.map((r) => ({ id: r.id, name: r.name, status_msg: r.status_msg, has_photo: !!r.avatar_file_id })));
+}));
+
+app.post('/api/profiles', auth, wrap(async (req, res) => {
+  const v = validProfile(req.body);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const c = await pool.query('SELECT COUNT(*)::int AS n FROM profiles WHERE user_id=$1', [req.user.id]);
+  if (c.rows[0].n >= PROFILE_MAX) return res.status(400).json({ error: `프로필은 최대 ${PROFILE_MAX}개까지 만들 수 있습니다` });
+  const r = await pool.query(
+    'INSERT INTO profiles (user_id, name, status_msg) VALUES ($1,$2,$3) RETURNING id', [req.user.id, v.name, v.statusMsg]);
+  res.json({ id: r.rows[0].id });
+}));
+
+app.patch('/api/profiles/:id', auth, wrap(async (req, res) => {
+  const v = validProfile(req.body);
+  if (v.error) return res.status(400).json({ error: v.error });
+  const r = await pool.query(
+    'UPDATE profiles SET name=$3, status_msg=$4 WHERE id=$1 AND user_id=$2',
+    [Number(req.params.id), req.user.id, v.name, v.statusMsg]);
+  if (!r.rowCount) return res.status(404).json({ error: '프로필을 찾을 수 없습니다' });
+  res.json({ ok: true });
+}));
+
+// 프로필 사진 지정 (먼저 /api/files 로 올린 이미지 id)
+app.post('/api/profiles/:id/avatar', auth, wrap(async (req, res) => {
+  const fileId = Number((req.body || {}).fileId);
+  const f = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, req.user.id]);
+  if (!f.rows[0] || !String(f.rows[0].mime).startsWith('image/')) return res.status(400).json({ error: '사진 파일을 선택하세요' });
+  const r = await pool.query('UPDATE profiles SET avatar_file_id=$3 WHERE id=$1 AND user_id=$2',
+    [Number(req.params.id), req.user.id, fileId]);
+  if (!r.rowCount) return res.status(404).json({ error: '프로필을 찾을 수 없습니다' });
+  res.json({ ok: true });
+}));
+
+app.delete('/api/profiles/:id', auth, wrap(async (req, res) => {
+  const r = await pool.query('DELETE FROM profiles WHERE id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
+  if (!r.rowCount) return res.status(404).json({ error: '프로필을 찾을 수 없습니다' });
+  res.json({ ok: true }); // 이 프로필을 쓰던 친구는 자동으로 기본 프로필로 돌아감 (ON DELETE SET NULL)
+}));
+
+// 내가 친구마다 지정한 프로필 목록
+app.get('/api/profiles/assign', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT viewer_id, profile_id FROM profile_assign WHERE owner_id=$1', [req.user.id]);
+  res.json(rows);
+}));
+
+// 특정 친구에게 보여줄 프로필 지정 (profileId 가 null 이면 기본 프로필)
+app.put('/api/profiles/assign/:viewerId', auth, wrap(async (req, res) => {
+  const me = req.user.id;
+  const viewer = Number(req.params.viewerId);
+  const pid = (req.body || {}).profileId;
+  const fr = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [me, viewer]);
+  if (!fr.rows[0]) return res.status(403).json({ error: '친구에게만 프로필을 지정할 수 있습니다' });
+  if (pid == null) {
+    await pool.query('DELETE FROM profile_assign WHERE owner_id=$1 AND viewer_id=$2', [me, viewer]);
+    return res.json({ ok: true });
+  }
+  const p = await pool.query('SELECT 1 FROM profiles WHERE id=$1 AND user_id=$2', [Number(pid), me]);
+  if (!p.rows[0]) return res.status(400).json({ error: '프로필을 찾을 수 없습니다' });
+  await pool.query(
+    `INSERT INTO profile_assign (owner_id, viewer_id, profile_id) VALUES ($1,$2,$3)
+     ON CONFLICT (owner_id, viewer_id) DO UPDATE SET profile_id = EXCLUDED.profile_id`,
+    [me, viewer, Number(pid)]);
+  res.json({ ok: true });
+}));
+
 // ---- 프로필 사진 ----
 // 내 사진 지정 (먼저 /api/files 로 올린 이미지 id)
 app.post('/api/me/avatar', auth, wrap(async (req, res) => {
@@ -466,14 +546,21 @@ app.post('/api/me/avatar', auth, wrap(async (req, res) => {
 // 사진 보기: 본인, 또는 수락된 친구이면서 상대가 사진 공개를 켠 경우만
 app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
   const id = Number(req.params.id);
+  // 나에게 지정된 프로필의 사진이 있으면 그것을, 없으면 기본 사진을 보여줌
   const { rows } = await pool.query(
-    'SELECT u.avatar_file_id, u.show_photo, f.mime, f.data FROM users u LEFT JOIN files f ON f.id = u.avatar_file_id WHERE u.id=$1',
-    [id]);
+    `SELECT COALESCE(pr.avatar_file_id, u.avatar_file_id) AS avatar_file_id,
+       (pr.avatar_file_id IS NOT NULL) AS profile_photo, u.show_photo, f.mime, f.data
+     FROM users u
+     LEFT JOIN profile_assign pa ON pa.owner_id = u.id AND pa.viewer_id = $2
+     LEFT JOIN profiles pr ON pr.id = pa.profile_id
+     LEFT JOIN files f ON f.id = COALESCE(pr.avatar_file_id, u.avatar_file_id)
+     WHERE u.id=$1`,
+    [id, req.user.id]);
   const r = rows[0];
   if (!r || !r.avatar_file_id) return res.status(404).end();
   if (id !== req.user.id) {
     const fr = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, id]);
-    if (!fr.rows[0] || !r.show_photo) return res.status(404).end();
+    if (!fr.rows[0] || !(r.show_photo || r.profile_photo)) return res.status(404).end();
   }
   res.set('Content-Type', r.mime);
   res.set('Cache-Control', 'private, max-age=300');
@@ -691,19 +778,24 @@ async function acceptFriend(requesterId, myId) {
 }
 
 app.get('/api/friends', auth, wrap(async (req, res) => {
+  // 친구가 나에게 지정한 프로필(없으면 기본 프로필)의 이름·상태·사진을 보여줌
   const { rows } = await pool.query(
-    `SELECT u.id, u.username, u.name, u.show_online, u.last_seen, u.show_photo, u.avatar_file_id,
-       (CASE WHEN u.show_status_msg THEN u.status_msg ELSE NULL END) AS status_msg,
+    `SELECT u.id, u.username, COALESCE(pr.name, u.name) AS name, u.show_online, u.last_seen, u.show_photo,
+       COALESCE(pr.avatar_file_id, u.avatar_file_id) AS avatar_file_id,
+       (pr.avatar_file_id IS NOT NULL) AS profile_photo,
+       (CASE WHEN u.show_status_msg THEN COALESCE(pr.status_msg, u.status_msg) ELSE NULL END) AS status_msg,
        (CASE WHEN u.show_last_seen THEN u.last_seen ELSE NULL END) AS last_seen
      FROM friendships f
      JOIN users u ON u.id = f.friend_id
-     WHERE f.user_id=$1 AND f.status='accepted' ORDER BY u.name`,
+     LEFT JOIN profile_assign pa ON pa.owner_id = u.id AND pa.viewer_id = $1
+     LEFT JOIN profiles pr ON pr.id = pa.profile_id
+     WHERE f.user_id=$1 AND f.status='accepted' ORDER BY COALESCE(pr.name, u.name)`,
     [req.user.id]
   );
   // 온라인 표시: 공개 설정이 켜져 있고 지금 접속 중일 때만
   res.json(rows.map((r) => ({
     id: r.id, username: r.username, name: r.name, status_msg: r.status_msg, last_seen: r.last_seen,
-    has_photo: !!(r.show_photo && r.avatar_file_id),
+    has_photo: !!(r.avatar_file_id && (r.show_photo || r.profile_photo)),
     online: !!(r.show_online && io.sockets.adapter.rooms.get('user:' + r.id)),
   })));
 }));
@@ -712,7 +804,7 @@ app.get('/api/friends', auth, wrap(async (req, res) => {
 app.get('/api/chats', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `WITH dm AS (
-       SELECT 'dm'::text AS type, f.friend_id AS id, u.name, u.username, 0 AS members,
+       SELECT 'dm'::text AS type, f.friend_id AS id, COALESCE(pr.name, u.name) AS name, u.username, 0 AS members,
          (SELECT json_build_object('text', m.text, 'kind', m.kind, 'enc', m.enc, 'file_id', m.file_id, 'created_at', m.created_at)
             FROM messages m
             WHERE (m.sender_id=$1 AND m.recipient_id=f.friend_id) OR (m.sender_id=f.friend_id AND m.recipient_id=$1)
@@ -720,6 +812,8 @@ app.get('/api/chats', auth, wrap(async (req, res) => {
          (SELECT COUNT(*)::int FROM messages m
             WHERE m.sender_id=f.friend_id AND m.recipient_id=$1 AND m.read_at IS NULL) AS unread
        FROM friendships f JOIN users u ON u.id = f.friend_id
+       LEFT JOIN profile_assign pa ON pa.owner_id = f.friend_id AND pa.viewer_id = $1
+       LEFT JOIN profiles pr ON pr.id = pa.profile_id
        WHERE f.user_id=$1 AND f.status='accepted'
      ),
      grp AS (

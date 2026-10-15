@@ -277,3 +277,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .stat { background: #f5f5f5; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .stat-k { font-size: 12px; color: #666; }
 .stat b { font-size: 14px; word-break: keep-all; }
+
+/* 멀티 프로필 */
+#pf-form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.small-btn { padding: 4px 10px; font-size: 13px; margin-left: 6px; }

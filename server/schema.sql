@@ -206,3 +206,19 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
 
 -- 예약 전송: 파일 첨부 지원
 ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS file_id INT;
+
+-- 멀티 프로필 (친구마다 보여줄 프로필 지정)
+CREATE TABLE IF NOT EXISTS profiles (
+  id SERIAL PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  status_msg TEXT NOT NULL DEFAULT '',
+  avatar_file_id INT REFERENCES files(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS profile_assign (
+  owner_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  viewer_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  profile_id INT REFERENCES profiles(id) ON DELETE SET NULL,
+  PRIMARY KEY (owner_id, viewer_id)
+);

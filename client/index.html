@@ -121,6 +121,25 @@
     </div>
   </div>
 
+  <!-- 멀티 프로필 관리 -->
+  <section id="view-profiles" class="view" hidden>
+    <div class="card">
+      <h1>프로필 관리</h1>
+      <p class="muted">친구마다 보여줄 프로필을 정할 수 있어요. 지정하지 않은 친구에게는 기본 프로필이 보입니다. 그룹 대화에서는 항상 기본 프로필이 보입니다.</p>
+      <ul id="pf-list" class="friends"></ul>
+      <h2 id="pf-form-title">새 프로필</h2>
+      <form id="pf-form">
+        <input id="pf-name" maxlength="20" placeholder="프로필 이름" required />
+        <input id="pf-status" maxlength="60" placeholder="상태 메시지 (선택)" />
+        <label class="muted">프로필 사진 (선택) <input id="pf-photo" type="file" accept="image/*" /></label>
+        <button type="submit" class="primary">저장</button>
+        <button id="pf-reset" class="ghost" type="button">새로 만들기</button>
+      </form>
+      <p id="pf-msg" class="msg-line"></p>
+      <button id="pf-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <!-- 예약 메시지 목록 -->
   <section id="view-scheduled" class="view" hidden>
     <div class="card">
@@ -245,6 +264,7 @@
       </div>
       <ul class="setting-list">
         <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
+        <li><button id="btn-profiles" class="ghost wide-btn" type="button">프로필 관리 (친구별 프로필)</button></li>
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
