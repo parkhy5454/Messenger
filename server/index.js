@@ -600,6 +600,22 @@ app.post('/api/sessions/revoke-others', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- 예약 전송 (1:1, 지금부터 30일 이내) ----
+app.post('/api/scheduled', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  const to = Number(b.to);
+  const text = String(b.text || '');
+  const at = new Date(b.sendAt);
+  if (!to || !text || text.length > 20000) return res.status(400).json({ error: '내용을 확인하세요' });
+  if (isNaN(at) || at <= new Date() || at - new Date() > 30 * 24 * 3600 * 1000) {
+    return res.status(400).json({ error: '예약 시간은 지금부터 30일 이내여야 합니다' });
+  }
+  const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, to]);
+  if (!f.rows[0]) return res.status(400).json({ error: '친구에게만 예약할 수 있습니다' });
+  await pool.query('INSERT INTO scheduled_messages (sender_id, recipient_id, text, send_at) VALUES ($1,$2,$3,$4)', [req.user.id, to, text, at]);
+  res.status(201).json({ ok: true });
+}));
+
 app.get('/api/blocks', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
@@ -759,6 +775,7 @@ app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
     `SELECT id, sender_id, recipient_id, text, kind, file_id, (CASE WHEN COALESCE((SELECT receipts FROM chat_prefs WHERE user_id=messages.recipient_id AND target_id=messages.sender_id AND kind='dm'), (SELECT receipts_on FROM users WHERE id=messages.recipient_id), true) THEN messages.read_at END) AS read_at, created_at, enc, reply_to, edited_at, deleted, view_once, viewed_at,
+       (SELECT json_agg(json_build_object('emoji', r.emoji, 'user', r.user_id)) FROM message_reactions r WHERE r.message_id = messages.id) AS reactions,
        (SELECT name FROM files WHERE id = messages.file_id) AS file_name
      FROM messages
      WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
@@ -924,6 +941,7 @@ app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
     `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at, m.enc, m.key_epoch, m.reply_to, m.edited_at, m.deleted,
+       (SELECT json_agg(json_build_object('emoji', r.emoji, 'user', r.user_id)) FROM message_reactions r WHERE r.message_id = m.id) AS reactions,
        (SELECT name FROM files WHERE id = m.file_id) AS file_name
      FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.group_id=$1 AND m.id < $2 ORDER BY m.id DESC LIMIT 50`,
@@ -1177,6 +1195,31 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 이모지 반응 켜기/끄기 (대화 참여자만)
+  const REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  socket.on('reaction:toggle', async (payload, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    try {
+      const p = payload || {};
+      const id = Number(p.id);
+      const emoji = String(p.emoji || '');
+      if (!id || !REACTIONS.includes(emoji)) return reply({ error: '잘못된 반응입니다' });
+      const { rows } = await pool.query('SELECT sender_id, recipient_id, group_id FROM messages WHERE id=$1 AND deleted=false', [id]);
+      const m = rows[0];
+      if (!m) return reply({ error: '반응할 수 없는 메시지입니다' });
+      const can = m.group_id ? await isGroupMember(m.group_id, me) : (m.sender_id === me || m.recipient_id === me);
+      if (!can) return reply({ error: '반응할 수 없는 메시지입니다' });
+      const del = await pool.query('DELETE FROM message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3', [id, me, emoji]);
+      if (!del.rowCount) await pool.query('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES ($1,$2,$3)', [id, me, emoji]);
+      const list = await pool.query('SELECT emoji, user_id AS user FROM message_reactions WHERE message_id=$1 ORDER BY emoji', [id]);
+      await emitToConversation({ ...m, id }, 'reaction:updated', { id, reactions: list.rows });
+      reply({ ok: true });
+    } catch (e) {
+      console.error(e);
+      reply({ error: '서버 오류가 발생했습니다' });
+    }
+  });
+
   // 1:1 대화 읽음 처리: 상대가 보낸 안 읽은 메시지를 모두 읽음으로 표시하고, 상대에게 알림
   socket.on('read:dm', async (payload) => {
     try {
@@ -1299,3 +1342,25 @@ async function purgeExpired() {
   }
 }
 setInterval(() => purgeExpired().catch((e) => console.error('자동 삭제 오류:', e)), 30000);
+
+// ---- 예약 전송: 시간이 되면 메시지를 보냅니다 (30초마다 확인) ----
+async function sendDueScheduled() {
+  const { rows } = await pool.query('SELECT id, sender_id, recipient_id, text FROM scheduled_messages WHERE send_at <= now() ORDER BY send_at LIMIT 100');
+  for (const r of rows) {
+    await pool.query('DELETE FROM scheduled_messages WHERE id=$1', [r.id]);
+    const f = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [r.sender_id, r.recipient_id]);
+    if (!f.rows[0] || (await isBlocked(r.sender_id, r.recipient_id))) continue;
+    const { rows: m } = await pool.query(
+      "INSERT INTO messages (sender_id, recipient_id, text, kind, enc) VALUES ($1,$2,$3,'text',true) RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc",
+      [r.sender_id, r.recipient_id, r.text]);
+    io.to(['user:' + r.recipient_id, 'user:' + r.sender_id]).emit('message:new', m[0]);
+    const sn = await pool.query('SELECT name FROM users WHERE id=$1', [r.sender_id]);
+    notifyUsers([r.recipient_id], {
+      title: sn.rows[0] ? sn.rows[0].name : '새 메시지',
+      body: '새 메시지가 도착했습니다',
+      tag: 'dm-' + r.sender_id,
+      url: '/',
+    }, r.sender_id).catch(() => {});
+  }
+}
+setInterval(() => sendDueScheduled().catch((e) => console.error('예약 전송 오류:', e)), 30000);

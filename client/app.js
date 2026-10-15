@@ -664,7 +664,7 @@ function quoteEl(m) {
 function openMsgMenu(m) {
   if (m.deleted) return;
   const mine = m.sender_id === me.id;
-  const items = [['답장', () => setReply(m)], ['전달', () => forwardMsg(m)]];
+  const items = [['답장', () => setReply(m)], ['전달', () => forwardMsg(m)], ['반응', () => openSheet(REACTION_EMOJI.map((e) => [e, () => toggleReaction(m, e)]))]];
   if (mine && !m.file_id) items.push(['수정', () => setEdit(m)]);
   if (mine) items.push(['삭제', () => deleteMsg(m)]);
   const box = $('#msg-menu-box');
@@ -956,6 +956,64 @@ $('#btn-revoke-others').onclick = async () => {
   }
 };
 
+// ---------- 이모지 반응 / 안전 번호 / 예약 전송 ----------
+const REACTION_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+function toggleReaction(m, emoji) {
+  socket.emit('reaction:toggle', { id: m.id, emoji }, (res) => {
+    if (res && res.error) alert(res.error);
+  });
+}
+function onReaction(u) {
+  const old = chatMsgs.find((x) => x.id === u.id);
+  if (!old) return;
+  old.reactions = u.reactions;
+  renderChat('keep');
+}
+
+// 안전 번호: 두 사람의 공개키로 만든 숫자. 양쪽 화면에서 같아야 중간에서 바꿔치기가 없습니다
+async function safetyNumber(peerPub) {
+  const a = myKey.pubB64, b = peerPub;
+  const [x, y] = a < b ? [a, b] : [b, a];
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(x + '|' + y)));
+  const out = [];
+  for (let i = 0; i < 30; i += 5) {
+    let n = 0;
+    for (let k = 0; k < 5; k++) n = n * 256 + d[i + k];
+    out.push(String(n % 100000).padStart(5, '0'));
+  }
+  return out.join(' ');
+}
+$('#btn-safety').onclick = async () => {
+  if (!current || current.type !== 'dm') return;
+  try {
+    const r = await api('/api/users/' + current.id + '/pubkey');
+    if (!r.pubkey || !myKey) return alert('아직 암호화 키가 준비되지 않았습니다');
+    alert('안전 번호\n\n' + (await safetyNumber(r.pubkey)) + '\n\n상대방 기기에서도 같은 번호가 보이면 대화가 안전합니다.');
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+// 예약 전송: 지금 입력한 내용을 암호화해서 정해진 시간에 보냅니다
+$('#btn-schedule').onclick = async () => {
+  if (!current || current.type !== 'dm') return alert('1:1 대화에서만 예약 전송할 수 있습니다');
+  const text = $('#msg-input').value.trim();
+  if (!text) return alert('예약할 메시지를 입력하세요');
+  const when = prompt('예약 시간을 입력하세요 (예: 2026-10-16 09:00, 30일 이내)');
+  if (!when) return;
+  const at = new Date(when.trim().replace(' ', 'T'));
+  if (isNaN(at) || at <= new Date()) return alert('현재 이후의 올바른 시간을 입력하세요');
+  try {
+    const k = await peerKey(current.id);
+    const body = await E2EE.seal(k, { t: text, f: null });
+    await api('/api/scheduled', { method: 'POST', body: JSON.stringify({ to: current.id, text: body, sendAt: at.toISOString() }) });
+    $('#msg-input').value = '';
+    alert('예약되었습니다: ' + at.toLocaleString('ko-KR'));
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
 // ---------- 시작 / 소켓 ----------
 async function start() {
   try {
@@ -1002,6 +1060,7 @@ function connectSocket() {
   socket.on('message:updated', onUpdated);
   socket.on('message:deleted', onDeleted);
   socket.on('message:viewed', onViewed);
+  socket.on('reaction:updated', onReaction);
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
@@ -1331,6 +1390,24 @@ function makeMsg(m, cont) {
   if (mine) line.append(meta, bubble);
   else line.append(bubble, meta);
   col.appendChild(line);
+  if (m.reactions && m.reactions.length && !m.deleted) {
+    const rx = document.createElement('div');
+    rx.className = 'reactions';
+    const counts = {};
+    for (const r of m.reactions) {
+      counts[r.emoji] = counts[r.emoji] || { n: 0, mine: false };
+      counts[r.emoji].n++;
+      if (r.user === me.id) counts[r.emoji].mine = true;
+    }
+    for (const e of Object.keys(counts)) {
+      const c = document.createElement('span');
+      c.className = 'rx' + (counts[e].mine ? ' mine' : '');
+      c.textContent = e + ' ' + counts[e].n;
+      c.onclick = () => toggleReaction(m, e);
+      rx.appendChild(c);
+    }
+    col.appendChild(rx);
+  }
   row.appendChild(col);
   return row;
 }

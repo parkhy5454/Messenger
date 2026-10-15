@@ -188,3 +188,18 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+
+-- 메시지 이모지 반응, 예약 전송
+CREATE TABLE IF NOT EXISTS message_reactions (
+  message_id INT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  PRIMARY KEY (message_id, user_id, emoji)
+);
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id SERIAL PRIMARY KEY,
+  sender_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  send_at TIMESTAMPTZ NOT NULL
+);
