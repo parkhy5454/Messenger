@@ -461,7 +461,7 @@ app.post('/api/me/consent', auth, wrap(async (req, res) => {
 
 app.get('/api/me', auth, wrap(async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo, totp_enabled, policy_version FROM users WHERE id=$1',
+    'SELECT id, username, name, status_msg, is_admin, banned, receipts_on, show_status_msg, show_online, show_last_seen, show_photo, (avatar_file_id IS NOT NULL AND show_photo) AS has_photo, totp_enabled, policy_version, photo_public FROM users WHERE id=$1',
     [req.user.id]
   );
   const u = rows[0];
@@ -1295,13 +1295,19 @@ app.delete('/api/me/avatar', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// 프로필 사진을 모든 사용자에게 공개할지 (켜면 로그인한 누구나 볼 수 있음)
+app.put('/api/prefs/photo-public', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE users SET photo_public=$2 WHERE id=$1', [req.user.id, !!(req.body || {}).on]);
+  res.json({ ok: true });
+}));
+
 // 사진 보기: 본인, 또는 수락된 친구이면서 상대가 사진 공개를 켠 경우만
 app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
   const id = Number(req.params.id);
   // 나에게 지정된 프로필의 사진이 있으면 그것을, 없으면 기본 사진을 보여줌
   const { rows } = await pool.query(
     `SELECT COALESCE(pr.avatar_file_id, u.avatar_file_id) AS avatar_file_id,
-       (pr.avatar_file_id IS NOT NULL) AS profile_photo, u.show_photo, f.mime, f.data
+       (pr.avatar_file_id IS NOT NULL) AS profile_photo, u.show_photo, u.photo_public, f.mime, f.data
      FROM users u
      LEFT JOIN profile_assign pa ON pa.owner_id = u.id AND pa.viewer_id = $2
      LEFT JOIN profiles pr ON pr.id = pa.profile_id
@@ -1311,8 +1317,10 @@ app.get('/api/users/:id/avatar', auth, wrap(async (req, res) => {
   const r = rows[0];
   if (!r || !r.avatar_file_id) return res.status(404).end();
   if (id !== req.user.id) {
+    // 모든 사용자 공개를 켰으면 누구나, 아니면 수락한 친구에게만 (사진 공개를 켠 경우)
     const fr = await pool.query("SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'", [req.user.id, id]);
-    if (!fr.rows[0] || !(r.show_photo || r.profile_photo)) return res.status(404).end();
+    const allowed = r.photo_public || (fr.rows[0] && (r.show_photo || r.profile_photo));
+    if (!allowed) return res.status(404).end();
   }
   res.set('Content-Type', r.mime);
   res.set('Cache-Control', 'private, max-age=300');

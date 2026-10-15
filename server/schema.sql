@@ -365,3 +365,6 @@ CREATE TABLE IF NOT EXISTS chat_pins (
 
 -- 푸시 알림 미리보기 표시 여부 (기본 켜짐)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS push_preview BOOLEAN NOT NULL DEFAULT true;
+
+-- 프로필 사진을 모든 사용자에게 공개 (기본 꺼짐)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_public BOOLEAN NOT NULL DEFAULT false;

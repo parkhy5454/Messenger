@@ -2603,7 +2603,24 @@ const VIS = [
   ['btn-vis-online', 'show_online', 'showOnline', '온라인 표시'],
   ['btn-vis-seen', 'show_last_seen', 'showLastSeen', '마지막 접속 공개'],
 ];
+function renderPublicBtn() {
+  $('#btn-vis-public').textContent = '모든 사용자에게 사진 공개: ' + (me.photo_public ? '켜짐' : '꺼짐');
+}
+$('#btn-vis-public').onclick = async () => {
+  const next = !me.photo_public;
+  if (next && !confirm('로그인한 모든 사용자가 내 프로필 사진을 볼 수 있습니다. 켤까요?')) return;
+  try {
+    await api('/api/prefs/photo-public', { method: 'PUT', body: JSON.stringify({ on: next }) });
+    me.photo_public = next;
+    avatarCache.clear();
+    renderPublicBtn();
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
 function renderVisBtns() {
+  renderPublicBtn();
   for (const v of VIS) $('#' + v[0]).textContent = v[3] + ': ' + (me[v[1]] ? '켜짐' : '꺼짐');
 }
 for (const v of VIS) {
