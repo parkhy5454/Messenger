@@ -140,7 +140,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .add input { flex: 1; padding: 10px 12px; }
 .add button { padding: 0 14px; border: none; border-radius: 10px; background: var(--yellow); font-weight: 700; }
 
-.search { margin: 10px 16px 6px; width: calc(100% - 32px); padding: 10px 14px; background: #f3f3f3; border-color: transparent; }
+.search { margin: 10px 16px 6px; width: calc(100% - 32px); padding: 10px 14px; background: #f3f3f3; color: #222; border-color: transparent; }
 .req-title { padding: 10px 16px 0; font-weight: 700; color: var(--ink); font-size: 14px; }
 #req-box { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 #req-box .friends > li { min-height: 56px; }
@@ -220,7 +220,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
   display: flex; align-items: center; gap: 6px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
   background: var(--bg); border-top: 1px solid var(--line);
 }
-#chat-view #compose input#msg-input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 20px; background: #f3f3f3; border: none; }
+#chat-view #compose input#msg-input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 20px; background: #f3f3f3; color: #222; border: none; }
 #chat-view #compose button.primary { padding: 10px 14px; border-radius: 20px; font-size: 14px; }
 .attach { cursor: pointer; font-size: 22px; padding: 4px 6px; line-height: 1; }
 
@@ -237,7 +237,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #msg-menu[hidden] { display: none; }
 #msg-menu-sheet { background: Canvas; color: CanvasText; width: 100%; padding: 12px; border-radius: 14px 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
 #msg-menu-box { display: flex; flex-direction: column; gap: 8px; }
-#compose-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #f3f3f3; font-size: 13px; }
+#compose-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #f3f3f3; color: #222; font-size: 13px; }
 #compose-bar[hidden] { display: none; }
 #compose-bar-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .quote { border-left: 3px solid #999; padding: 2px 6px; margin-bottom: 4px; font-size: 12px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
@@ -269,12 +269,12 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #call-controls { display: flex; gap: 8px; justify-content: center; padding: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 #call-controls button { flex: 1; max-width: 140px; }
 #call-end { background: #ea4335; color: #fff; }
-#call-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: #e8f5e9; font-size: 14px; }
+#call-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; background: #e8f5e9; color: #222; font-size: 14px; }
 #call-banner[hidden] { display: none; }
 
 /* 상태 대시보드 */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin: 8px 0 16px; }
-.stat { background: #f5f5f5; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.stat { background: #f5f5f5; color: #222; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
 .stat-k { font-size: 12px; color: #666; }
 .stat b { font-size: 14px; word-break: keep-all; }
 
@@ -285,8 +285,8 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 /* AI 어시스턴트 */
 .ai-list { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 0; }
 .ai-bubble { max-width: 80%; padding: 8px 12px; border-radius: 12px; margin: 4px 0; white-space: pre-wrap; word-break: break-word; }
-.ai-bubble.me { align-self: flex-end; background: #fee500; }
-.ai-bubble.ai { align-self: flex-start; background: #f1f1f1; }
+.ai-bubble.me { align-self: flex-end; background: #fee500; color: #222; }
+.ai-bubble.ai { align-self: flex-start; background: #f1f1f1; color: #222; }
 #ai-form { display: flex; gap: 8px; margin-top: 8px; }
 #ai-input { flex: 1; }
 
