@@ -267,3 +267,19 @@ CREATE TABLE IF NOT EXISTS muted_chats (
   target_id INT NOT NULL,
   PRIMARY KEY (user_id, kind, target_id)
 );
+
+-- 그룹 목적 템플릿, 공지, 일정
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'general';
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS notice TEXT;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS notice_epoch INT;
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS notice_at TIMESTAMPTZ;
+CREATE TABLE IF NOT EXISTS group_events (
+  id SERIAL PRIMARY KEY,
+  group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  epoch INT,
+  starts_at TIMESTAMPTZ NOT NULL,
+  created_by INT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS group_events_group ON group_events (group_id, starts_at);

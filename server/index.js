@@ -740,6 +740,87 @@ app.put('/api/prefs/mutes', auth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ---- 그룹 목적 템플릿 · 공지 · 일정 (작성은 방장만, 암호화 그룹이면 내용도 그룹 키로 암호화해서 저장) ----
+const GROUP_PURPOSES = ['general', 'parents', 'club', 'guild', 'study'];
+
+async function broadcastBoard(gid) {
+  const { rows } = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [gid]);
+  for (const r of rows) io.to('user:' + r.user_id).emit('group:board', { groupId: gid });
+}
+
+async function groupOwnerCheck(gid, uid) {
+  const { rows } = await pool.query('SELECT owner_id, enc FROM groups WHERE id=$1', [gid]);
+  if (!rows[0]) return { status: 404, error: '그룹을 찾을 수 없습니다' };
+  if (rows[0].owner_id !== uid) return { status: 403, error: '방장만 작성할 수 있습니다' };
+  return { enc: !!rows[0].enc };
+}
+
+app.get('/api/groups/:id/board', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const g = (await pool.query(
+    'SELECT purpose, owner_id, enc, notice, notice_epoch, notice_at FROM groups WHERE id=$1', [gid])).rows[0];
+  const ev = await pool.query(
+    `SELECT id, body, epoch, starts_at FROM group_events
+     WHERE group_id=$1 AND starts_at >= now() - interval '1 day' ORDER BY starts_at LIMIT 100`, [gid]);
+  res.json({
+    purpose: g.purpose,
+    owner: g.owner_id === req.user.id,
+    enc: g.enc,
+    notice: g.notice,
+    notice_epoch: g.notice_epoch,
+    notice_at: g.notice_at,
+    events: ev.rows,
+  });
+}));
+
+// 공지 저장 (빈 내용이면 공지 삭제). 암호화 그룹은 body가 암호문이고 epoch가 필요
+app.put('/api/groups/:id/notice', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const chk = await groupOwnerCheck(gid, req.user.id);
+  if (chk.error) return res.status(chk.status).json({ error: chk.error });
+  const b = req.body || {};
+  const body = String(b.body || '').trim();
+  if (body.length > 20000) return res.status(400).json({ error: '공지는 너무 깁니다' });
+  const epoch = b.epoch == null ? null : Number(b.epoch);
+  if (body && chk.enc && !Number.isInteger(epoch)) return res.status(400).json({ error: 'KEY_REQUIRED' });
+  if (!body) {
+    await pool.query('UPDATE groups SET notice=NULL, notice_epoch=NULL, notice_at=NULL WHERE id=$1', [gid]);
+  } else {
+    await pool.query('UPDATE groups SET notice=$2, notice_epoch=$3, notice_at=now() WHERE id=$1',
+      [gid, body, chk.enc ? epoch : null]);
+  }
+  await broadcastBoard(gid);
+  res.json({ ok: true });
+}));
+
+app.post('/api/groups/:id/events', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const chk = await groupOwnerCheck(gid, req.user.id);
+  if (chk.error) return res.status(chk.status).json({ error: chk.error });
+  const b = req.body || {};
+  const body = String(b.body || '');
+  const startsAt = new Date(b.startsAt);
+  if (!body || body.length > 20000) return res.status(400).json({ error: '일정 제목을 입력하세요' });
+  if (isNaN(startsAt)) return res.status(400).json({ error: '일정 시간을 확인하세요' });
+  const epoch = b.epoch == null ? null : Number(b.epoch);
+  if (chk.enc && !Number.isInteger(epoch)) return res.status(400).json({ error: 'KEY_REQUIRED' });
+  const r = await pool.query(
+    'INSERT INTO group_events (group_id, body, epoch, starts_at, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+    [gid, body, chk.enc ? epoch : null, startsAt, req.user.id]);
+  await broadcastBoard(gid);
+  res.json({ id: r.rows[0].id });
+}));
+
+app.delete('/api/groups/:id/events/:eid', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  const chk = await groupOwnerCheck(gid, req.user.id);
+  if (chk.error) return res.status(chk.status).json({ error: chk.error });
+  await pool.query('DELETE FROM group_events WHERE id=$1 AND group_id=$2', [Number(req.params.eid), gid]);
+  await broadcastBoard(gid);
+  res.json({ ok: true });
+}));
+
 // ---- 멀티 프로필: 하나의 계정에 여러 프로필(이름·상태·사진)을 두고, 친구마다 보여줄 프로필을 지정 ----
 // 기본 프로필은 users 테이블 값을 그대로 씀. 그룹 대화에서는 항상 기본 프로필이 보임.
 const PROFILE_MAX = 5;
@@ -1235,7 +1316,8 @@ app.post('/api/groups', auth, wrap(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const g = await client.query('INSERT INTO groups (name, owner_id, enc) VALUES ($1,$2,$3) RETURNING id, name, enc', [name, req.user.id, wantEnc]);
+    const purpose = GROUP_PURPOSES.includes((req.body || {}).purpose) ? req.body.purpose : 'general';
+    const g = await client.query('INSERT INTO groups (name, owner_id, enc, purpose) VALUES ($1,$2,$3,$4) RETURNING id, name, enc', [name, req.user.id, wantEnc, purpose]);
     const groupId = g.rows[0].id;
     for (const uid of all) {
       await client.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2)', [groupId, uid]);

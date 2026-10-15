@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -624,7 +624,7 @@ $('#gr-form').onsubmit = async (e) => {
   e.preventDefault();
   const ids = [...document.querySelectorAll('#gr-friends input:checked')].map((c) => Number(c.value));
   try {
-    const body = { name: $('#gr-name').value.trim(), memberIds: ids };
+    const body = { name: $('#gr-name').value.trim(), memberIds: ids, purpose: $('#gr-purpose').value };
     const pubs = await Promise.all([me.id, ...ids].map(async (uid) => {
       if (uid === me.id) return { uid, pubkey: myKey ? myKey.pubB64 : null };
       return { uid, pubkey: (await api('/api/users/' + uid + '/pubkey')).pubkey };
@@ -1175,6 +1175,9 @@ function connectSocket() {
   socket.on('call:peer-left', ({ groupId, sid }) => {
     if (callState && callState.groupId === groupId) removeCallPeer(sid);
   });
+  socket.on('group:board', ({ groupId }) => {
+    if (current && current.type === 'group' && current.id === groupId) refreshBoard(groupId).catch(() => {});
+  });
   socket.on('call:state', ({ groupId, count }) => {
     callCounts.set(groupId, count);
     renderCallBanner();
@@ -1357,7 +1360,9 @@ async function openChat(t) {
   if (t.type === 'dm') refreshReceiptBtn();
   $('#group-actions').hidden = t.type !== 'group';
   $('#call-banner').hidden = true;
+  $('#notice-banner').hidden = true;
   renderMuteBtn();
+  if (t.type === 'group') refreshBoard(t.id).catch(() => {});
   if (t.type === 'group') socket.emit('call:status', { groupId: t.id }, (r) => {
     if (r && !r.error) {
       callCounts.set(t.id, r.count);
@@ -2492,5 +2497,137 @@ $('#quiet-save').onclick = async () => {
     $('#quiet-msg').textContent = '저장했습니다.';
   } catch (e) {
     $('#quiet-msg').textContent = e.message;
+  }
+};
+
+// ===== 그룹 게시판 (목적 템플릿 · 공지 · 일정, 방장만 작성) =====
+const PURPOSE_LABEL = { general: '일반 그룹', parents: '학부모 모임', club: '동호회', guild: '게임 길드', study: '스터디' };
+let boardState = null;
+
+// 암호화 그룹이면 그룹 키로 열고, 아니면 그대로 보여줌
+async function openBoardText(gid, enc, epoch, body) {
+  if (!enc) return body;
+  let k = await groupKey(gid, epoch);
+  if (!k) {
+    await syncGroupKeys(gid).catch(() => {});
+    k = await groupKey(gid, epoch);
+  }
+  if (!k) return '(암호화된 내용을 열 수 없습니다)';
+  try {
+    return (await E2EE.open(k, body)).t;
+  } catch (_) {
+    return '(암호화된 내용을 열 수 없습니다)';
+  }
+}
+
+// 작성 내용을 그룹 키로 암호화 (일반 그룹이면 평문)
+async function sealBoardText(text) {
+  const sk = await sendKey();
+  if (!sk) return { body: text, epoch: null };
+  return { body: await E2EE.seal(sk.key, { t: text }), epoch: sk.epoch };
+}
+
+async function refreshBoard(gid) {
+  if (!current || current.type !== 'group' || current.id !== gid) return;
+  try {
+    boardState = await api('/api/groups/' + gid + '/board');
+  } catch (_) {
+    return;
+  }
+  const notice = boardState.notice ? await openBoardText(gid, boardState.enc, boardState.notice_epoch, boardState.notice) : '';
+  $('#notice-text').textContent = notice ? '📌 공지 · ' + notice : '';
+  $('#notice-banner').hidden = !notice;
+  if (!$('#view-gboard').hidden) await renderBoard();
+}
+
+async function renderBoard() {
+  const s = boardState;
+  if (!s || !current || current.type !== 'group') return;
+  const gid = current.id;
+  $('#gb-title').textContent = current.name + ' 게시판';
+  $('#gb-purpose').textContent = PURPOSE_LABEL[s.purpose] || '일반 그룹';
+  $('#gb-notice').textContent = s.notice
+    ? await openBoardText(gid, s.enc, s.notice_epoch, s.notice)
+    : '등록된 공지가 없습니다';
+  $('#gb-notice-form').hidden = !s.owner;
+  $('#gb-event-form').hidden = !s.owner;
+  const ul = $('#gb-events');
+  ul.innerHTML = '';
+  if (!s.events.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = '예정된 일정이 없습니다';
+    ul.appendChild(li);
+  }
+  for (const ev of s.events) {
+    const li = document.createElement('li');
+    const text = await openBoardText(gid, s.enc, ev.epoch, ev.body);
+    const when = new Date(ev.starts_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+    const span = document.createElement('span');
+    span.textContent = when + ' · ' + text;
+    li.appendChild(span);
+    if (s.owner) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'ghost small-btn';
+      del.textContent = '삭제';
+      del.onclick = async () => {
+        try {
+          await api('/api/groups/' + gid + '/events/' + ev.id, { method: 'DELETE' });
+          await refreshBoard(gid);
+        } catch (e) {
+          $('#gb-msg').textContent = e.message;
+        }
+      };
+      li.appendChild(del);
+    }
+    ul.appendChild(li);
+  }
+}
+
+async function openBoard() {
+  if (!current || current.type !== 'group') return;
+  $('#gb-msg').textContent = '';
+  showView('gboard');
+  await refreshBoard(current.id);
+}
+$('#btn-board').onclick = () => openBoard();
+$('#gb-back').onclick = () => {
+  showView('main');
+  setChatOpen(true);
+};
+
+$('#gb-notice-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $('#gb-notice-text').value.trim();
+  if (!text || !current) return;
+  try {
+    const sealed = await sealBoardText(text);
+    await api('/api/groups/' + current.id + '/notice', { method: 'PUT', body: JSON.stringify(sealed) });
+    $('#gb-notice-text').value = '';
+    $('#gb-msg').textContent = '공지를 저장했습니다.';
+    await refreshBoard(current.id);
+  } catch (err) {
+    $('#gb-msg').textContent = err.message;
+  }
+};
+
+$('#gb-event-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const title = $('#gb-event-title').value.trim();
+  const when = $('#gb-event-time').value;
+  if (!title || !when || !current) return;
+  try {
+    const sealed = await sealBoardText(title);
+    await api('/api/groups/' + current.id + '/events', {
+      method: 'POST',
+      body: JSON.stringify({ body: sealed.body, epoch: sealed.epoch, startsAt: new Date(when).toISOString() }),
+    });
+    $('#gb-event-title').value = '';
+    $('#gb-event-time').value = '';
+    $('#gb-msg').textContent = '일정을 추가했습니다.';
+    await refreshBoard(current.id);
+  } catch (err) {
+    $('#gb-msg').textContent = err.message;
   }
 };

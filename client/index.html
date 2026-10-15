@@ -158,6 +158,29 @@
     </div>
   </section>
 
+  <!-- 그룹 게시판 -->
+  <section id="view-gboard" class="view" hidden>
+    <div class="card wide">
+      <h1 id="gb-title">게시판</h1>
+      <p id="gb-purpose" class="muted"></p>
+      <h2>공지</h2>
+      <p id="gb-notice" class="notice-box"></p>
+      <form id="gb-notice-form" hidden>
+        <textarea id="gb-notice-text" maxlength="500" placeholder="공지 내용 (비우고 저장하면 공지가 지워집니다)"></textarea>
+        <button type="submit" class="primary">공지 저장</button>
+      </form>
+      <h2>일정</h2>
+      <ul id="gb-events" class="plain"></ul>
+      <form id="gb-event-form" hidden>
+        <input id="gb-event-title" maxlength="100" placeholder="일정 제목" />
+        <input id="gb-event-time" type="datetime-local" />
+        <button type="submit" class="primary">일정 추가</button>
+      </form>
+      <p id="gb-msg" class="msg-line"></p>
+      <button id="gb-back" class="link" type="button">대화로 돌아가기</button>
+    </div>
+  </section>
+
   <!-- 봇 -->
   <section id="view-bots" class="view" hidden>
     <div class="card">
@@ -251,6 +274,15 @@
       <h1>그룹 만들기</h1>
       <form id="gr-form">
         <input id="gr-name" placeholder="그룹 이름 (1~30자)" maxlength="30" required />
+        <label class="muted">그룹 종류
+          <select id="gr-purpose">
+            <option value="general">일반 그룹</option>
+            <option value="parents">학부모 모임</option>
+            <option value="club">동호회</option>
+            <option value="guild">게임 길드</option>
+            <option value="study">스터디</option>
+          </select>
+        </label>
         <p class="muted">초대할 친구를 선택하세요.</p>
         <div id="gr-friends" class="check-list"></div>
         <button type="submit" class="primary">만들기</button>
@@ -367,8 +399,10 @@
           <button id="btn-gadd" class="ghost" type="button">초대</button>
           <button id="btn-gleave" class="ghost" type="button">나가기</button>
           <button id="btn-call" class="ghost" type="button">통화</button>
+          <button id="btn-board" class="ghost" type="button">게시판</button>
         </div>
       </header>
+      <div id="notice-banner" hidden><span id="notice-text"></span></div>
       <div id="call-banner" hidden><span id="call-banner-text"></span><button id="call-join" class="primary" type="button">참여</button></div>
       <button id="more" class="link" type="button" hidden>이전 메시지 더 보기</button>
       <div id="chat-box" class="box"></div>
