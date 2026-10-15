@@ -140,7 +140,7 @@ app.post('/api/auth/verify', limit({ windowMs: 10 * 60 * 1000, max: 10, key: (re
 app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => 'login:' + req.ip + ':' + String((req.body || {}).username || '').toLowerCase() }), wrap(async (req, res) => {
   const { username, password } = req.body || {};
   const { rows } = await pool.query(
-    'SELECT id, username, password_hash, email_verified FROM users WHERE username=$1',
+    'SELECT id, username, password_hash, email_verified, banned FROM users WHERE username=$1',
     [String(username || '').toLowerCase()]
   );
   const u = rows[0];
@@ -148,6 +148,7 @@ app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req
     return res.status(401).json({ error: '아이디 또는 비밀번호가 틀렸습니다' });
   }
   if (!u.email_verified) return res.status(403).json({ error: '이메일 인증을 먼저 완료하세요' });
+  if (u.banned) return res.status(403).json({ error: '이용이 제한된 계정입니다' });
   res.json({ token: issue(u) });
 }));
 
@@ -258,8 +259,37 @@ app.post('/api/me/password', auth, wrap(async (req, res) => {
 
 // ---- 사용자·친구 ----
 app.get('/api/me', auth, wrap(async (req, res) => {
-  const { rows } = await pool.query('SELECT id, username, name FROM users WHERE id=$1', [req.user.id]);
-  res.json(rows[0]);
+  const { rows } = await pool.query(
+    'SELECT id, username, name, status_msg, is_admin, banned FROM users WHERE id=$1',
+    [req.user.id]
+  );
+  const u = rows[0];
+  if (!u) return res.status(401).json({ error: '로그인이 필요합니다' });
+  if (u.banned) return res.status(403).json({ error: '이용이 제한된 계정입니다' });
+  res.json(u);
+}));
+
+// 프로필 수정 (이름, 상태 메시지)
+app.patch('/api/me', auth, wrap(async (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  const statusMsg = String((req.body || {}).statusMsg || '').trim();
+  if (!name || name.length > 20) return res.status(400).json({ error: '이름은 1~20자로 입력하세요' });
+  if (statusMsg.length > 60) return res.status(400).json({ error: '상태 메시지는 60자 이내로 입력하세요' });
+  await pool.query('UPDATE users SET name=$2, status_msg=$3 WHERE id=$1', [req.user.id, name, statusMsg]);
+  res.json({ ok: true });
+}));
+
+// 차단 목록 / 차단 해제
+app.get('/api/blocks', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT u.id, u.username, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id=$1 ORDER BY u.name`,
+    [req.user.id]
+  );
+  res.json(rows);
+}));
+app.delete('/api/blocks/:userId', auth, wrap(async (req, res) => {
+  await pool.query('DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2', [req.user.id, Number(req.params.userId)]);
+  res.json({ ok: true });
 }));
 
 app.post('/api/friends', auth, wrap(async (req, res) => {
@@ -365,16 +395,193 @@ app.post('/api/reports', auth, wrap(async (req, res) => {
 }));
 
 // ---- 1:1 메시지 기록 ----
+// before 파라미터로 이전 메시지를 50개씩 불러옵니다
 app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const other = Number(req.params.userId);
   const me = req.user.id;
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT id, sender_id, recipient_id, text, created_at FROM messages
-     WHERE (sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)
+    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at,
+       (SELECT name FROM files WHERE id = messages.file_id) AS file_name
+     FROM messages
+     WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
      ORDER BY id DESC LIMIT 50`,
-    [me, other]
+    [me, other, before]
   );
   res.json(rows.reverse());
+}));
+
+// 안 읽은 1:1 메시지 개수 (보낸 사람별)
+app.get('/api/unread', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT sender_id, COUNT(*)::int AS count FROM messages
+     WHERE recipient_id=$1 AND read_at IS NULL GROUP BY sender_id`,
+    [req.user.id]
+  );
+  res.json(rows);
+}));
+
+// ---- 그룹 채팅 ----
+async function isGroupMember(groupId, userId) {
+  const { rows } = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND user_id=$2', [groupId, userId]);
+  return rows.length > 0;
+}
+
+app.post('/api/groups', auth, wrap(async (req, res) => {
+  const name = String((req.body || {}).name || '').trim();
+  const memberIds = Array.isArray((req.body || {}).memberIds) ? req.body.memberIds.map(Number) : [];
+  if (!name || name.length > 30) return res.status(400).json({ error: '그룹 이름은 1~30자로 입력하세요' });
+  // 멤버는 나와 친구인 사람만 가능 (최대 49명)
+  const friends = await pool.query(
+    `SELECT friend_id FROM friendships WHERE user_id=$1 AND status='accepted' AND friend_id = ANY($2::int[])`,
+    [req.user.id, memberIds]
+  );
+  const ids = [...new Set(friends.rows.map((r) => r.friend_id))].slice(0, 49);
+  if (!ids.length) return res.status(400).json({ error: '그룹에 초대할 친구를 선택하세요' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const g = await client.query('INSERT INTO groups (name, owner_id) VALUES ($1,$2) RETURNING id, name', [name, req.user.id]);
+    const groupId = g.rows[0].id;
+    for (const uid of [req.user.id, ...ids]) {
+      await client.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2)', [groupId, uid]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json(g.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}));
+
+// 내가 속한 그룹 목록 (멤버 포함)
+app.get('/api/groups', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT g.id, g.name,
+       (SELECT json_agg(json_build_object('id', u.id, 'name', u.name, 'username', u.username))
+          FROM group_members gm2 JOIN users u ON u.id = gm2.user_id WHERE gm2.group_id = g.id) AS members
+     FROM groups g JOIN group_members gm ON gm.group_id = g.id
+     WHERE gm.user_id=$1 ORDER BY g.id DESC`,
+    [req.user.id]
+  );
+  res.json(rows);
+}));
+
+// 그룹 멤버 추가 (나와 친구인 사람만)
+app.post('/api/groups/:id/members', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const uid = Number((req.body || {}).userId);
+  const f = await pool.query(
+    `SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'`,
+    [req.user.id, uid]
+  );
+  if (!f.rows[0]) return res.status(400).json({ error: '친구만 초대할 수 있습니다' });
+  await pool.query('INSERT INTO group_members (group_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [groupId, uid]);
+  res.json({ ok: true });
+}));
+
+// 그룹 나가기
+app.post('/api/groups/:id/leave', auth, wrap(async (req, res) => {
+  await pool.query('DELETE FROM group_members WHERE group_id=$1 AND user_id=$2', [Number(req.params.id), req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
+  const groupId = Number(req.params.id);
+  if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const { rows } = await pool.query(
+    `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at,
+       (SELECT name FROM files WHERE id = m.file_id) AS file_name
+     FROM messages m JOIN users u ON u.id = m.sender_id
+     WHERE m.group_id=$1 AND m.id < $2 ORDER BY m.id DESC LIMIT 50`,
+    [groupId, before]
+  );
+  res.json(rows.reverse());
+}));
+
+// ---- 파일 업로드 / 다운로드 (DB 저장, 최대 2MB) ----
+const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+const INLINE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+app.post(
+  '/api/files',
+  auth,
+  express.raw({ type: () => true, limit: '2mb' }),
+  wrap(async (req, res) => {
+    const mime = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const name = decodeURIComponent(String(req.headers['x-file-name'] || 'file')).slice(0, 200);
+    if (!ALLOWED_MIME.includes(mime)) return res.status(415).json({ error: '이미지, PDF, 텍스트 파일만 보낼 수 있습니다' });
+    if (!req.body || !req.body.length) return res.status(400).json({ error: '빈 파일입니다' });
+    const { rows } = await pool.query(
+      `INSERT INTO files (uploader_id, name, mime, size, data) VALUES ($1,$2,$3,$4,$5) RETURNING id, name, mime, size`,
+      [req.user.id, name, mime, req.body.length, req.body]
+    );
+    res.status(201).json(rows[0]);
+  })
+);
+
+app.get('/api/files/:id', auth, wrap(async (req, res) => {
+  // 업로더이거나, 나에게 온 메시지 / 내가 속한 그룹 메시지에 첨부된 파일만 받을 수 있습니다
+  const { rows } = await pool.query(
+    `SELECT f.name, f.mime, f.data FROM files f
+     WHERE f.id=$1 AND (
+       f.uploader_id=$2
+       OR EXISTS (SELECT 1 FROM messages m WHERE m.file_id=f.id AND (m.sender_id=$2 OR m.recipient_id=$2
+            OR m.group_id IN (SELECT group_id FROM group_members WHERE user_id=$2)))
+     )`,
+    [Number(req.params.id), req.user.id]
+  );
+  const f = rows[0];
+  if (!f) return res.status(404).json({ error: '파일을 찾을 수 없습니다' });
+  const inline = INLINE_MIME.includes(f.mime);
+  res.set('Content-Type', inline ? f.mime : 'application/octet-stream');
+  res.set('Content-Disposition', (inline ? 'inline' : 'attachment') + "; filename*=UTF-8''" + encodeURIComponent(f.name));
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.send(f.data);
+}));
+
+// ---- 관리자 ----
+async function adminOnly(req, res, next) {
+  const { rows } = await pool.query('SELECT is_admin FROM users WHERE id=$1', [req.user.id]);
+  if (!rows[0] || !rows[0].is_admin) return res.status(403).json({ error: '관리자만 사용할 수 있습니다' });
+  next();
+}
+
+app.get('/api/admin/reports', auth, adminOnly, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT r.id, r.reason, r.created_at,
+       r.reporter_id, ru.username AS reporter_username,
+       r.target_id, tu.username AS target_username, tu.banned AS target_banned
+     FROM reports r
+     JOIN users ru ON ru.id = r.reporter_id
+     JOIN users tu ON tu.id = r.target_id
+     ORDER BY r.id DESC LIMIT 200`
+  );
+  res.json(rows);
+}));
+
+app.post('/api/admin/reports/:id/resolve', auth, adminOnly, wrap(async (req, res) => {
+  await pool.query('DELETE FROM reports WHERE id=$1', [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+app.get('/api/admin/users', auth, adminOnly, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT id, username, name, email, email_verified, banned, created_at FROM users ORDER BY id DESC LIMIT 200`
+  );
+  res.json(rows);
+}));
+
+app.post('/api/admin/users/:id/ban', auth, adminOnly, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (id === req.user.id) return res.status(400).json({ error: '자기 자신은 제한할 수 없습니다' });
+  await pool.query('UPDATE users SET banned=$2 WHERE id=$1', [id, !!(req.body || {}).banned]);
+  res.json({ ok: true });
 }));
 
 // ---- 실시간 (Socket.IO) ----
@@ -391,31 +598,81 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  socket.join('user:' + socket.user.id);
+  const me = socket.user.id;
+  socket.join('user:' + me);
 
+  // 메시지 전송: { to, text, fileId } (1:1) 또는 { groupId, text, fileId } (그룹)
   socket.on('message:send', async (payload, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
     try {
-      const to = Number((payload || {}).to);
-      const text = String((payload || {}).text || '').trim();
-      if (!to || !text || text.length > 2000) return reply({ error: '메시지가 올바르지 않습니다' });
-      if (await isBlocked(socket.user.id, to)) return reply({ error: '차단 관계라 보낼 수 없습니다' });
+      const p = payload || {};
+      const text = String(p.text || '').trim();
+      const fileId = p.fileId ? Number(p.fileId) : null;
+      if (!text && !fileId) return reply({ error: '메시지를 입력하세요' });
+      if (text.length > 2000) return reply({ error: '메시지는 2000자 이내로 입력하세요' });
+
+      let kind = 'text';
+      if (fileId) {
+        const fr = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, me]);
+        if (!fr.rows[0]) return reply({ error: '파일을 찾을 수 없습니다' });
+        kind = INLINE_MIME.includes(fr.rows[0].mime) ? 'image' : 'file';
+      }
+
+      if (p.groupId) {
+        // 그룹 메시지: 멤버 전원에게 전달
+        const groupId = Number(p.groupId);
+        if (!(await isGroupMember(groupId, me))) return reply({ error: '그룹 멤버가 아닙니다' });
+        const { rows } = await pool.query(
+          `INSERT INTO messages (sender_id, group_id, text, kind, file_id) VALUES ($1,$2,$3,$4,$5)
+           RETURNING id, sender_id, group_id, text, kind, file_id, created_at,
+             (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
+          [me, groupId, text, kind, fileId]
+        );
+        const members = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [groupId]);
+        const nm = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
+        const msg = { ...rows[0], sender_name: nm.rows[0] ? nm.rows[0].name : '' };
+        for (const m of members.rows) io.to('user:' + m.user_id).emit('message:new', msg);
+        return reply({ ok: true });
+      }
+
+      // 1:1 메시지: 수락된 친구에게만, 차단 관계가 아닐 때
+      const to = Number(p.to);
+      if (!to) return reply({ error: '받는 사람을 선택하세요' });
+      if (await isBlocked(me, to)) return reply({ error: '차단 관계라 보낼 수 없습니다' });
       const f = await pool.query(
         `SELECT 1 FROM friendships WHERE user_id=$1 AND friend_id=$2 AND status='accepted'`,
-        [socket.user.id, to]
+        [me, to]
       );
       if (!f.rows[0]) return reply({ error: '친구에게만 메시지를 보낼 수 있습니다' });
 
       const { rows } = await pool.query(
-        `INSERT INTO messages (sender_id, recipient_id, text) VALUES ($1,$2,$3)
-         RETURNING id, sender_id, recipient_id, text, created_at`,
-        [socket.user.id, to, text]
+        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id) VALUES ($1,$2,$3,$4,$5)
+         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at,
+           (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
+        [me, to, text, kind, fileId]
       );
-      io.to(['user:' + to, 'user:' + socket.user.id]).emit('message:new', rows[0]);
+      io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
       reply({ ok: true });
     } catch (e) {
       console.error(e);
       reply({ error: '서버 오류가 발생했습니다' });
+    }
+  });
+
+  // 1:1 대화 읽음 처리: 상대가 보낸 안 읽은 메시지를 모두 읽음으로 표시하고, 상대에게 알림
+  socket.on('read:dm', async (payload) => {
+    try {
+      const other = Number((payload || {}).userId);
+      if (!other) return;
+      const { rows } = await pool.query(
+        `UPDATE messages SET read_at=now()
+         WHERE sender_id=$1 AND recipient_id=$2 AND read_at IS NULL
+         RETURNING id, read_at`,
+        [other, me]
+      );
+      if (rows.length) io.to('user:' + other).emit('read:dm', { by: me, ids: rows.map((r) => r.id) });
+    } catch (e) {
+      console.error(e);
     }
   });
 });

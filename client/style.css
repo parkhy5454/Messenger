@@ -47,3 +47,25 @@ button.ghost { background:none; border:1px solid var(--line); padding:6px 10px; 
 
 /* 글자 링크 버튼 (비밀번호 찾기 등) */
 button.link { background:none; border:none; color:var(--primary, #2f6fed); font-size:14px; padding:8px 0; margin-top:6px; width:100%; text-align:center; cursor:pointer; }
+
+/* ---- 2~4번 기능 추가 스타일 ---- */
+.menu { display:flex; flex-wrap:wrap; gap:6px; padding:8px 12px; border-bottom:1px solid var(--line); }
+.menu button { font-size:12px; padding:5px 8px; }
+.search { margin:8px 12px; width:calc(100% - 24px); box-sizing:border-box; }
+.badge { display:inline-block; min-width:20px; margin-left:6px; padding:0 6px; border-radius:10px; background:#e03131; color:#fff; font-size:12px; text-align:center; }
+.plain { list-style:none; padding:0; margin:8px 0; }
+.plain li { padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+.plain li button { margin-left:6px; font-size:12px; padding:4px 8px; }
+.check-list { display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow:auto; margin:8px 0; }
+.check-list label { font-size:14px; }
+.msg-row { display:flex; flex-direction:column; margin:4px 0; }
+.msg-row.me { align-items:flex-end; }
+.msg-row.them { align-items:flex-start; }
+.msg-row .sender { font-size:12px; color:var(--muted); margin:0 4px 2px; }
+.msg-row .read { font-size:11px; color:var(--muted); margin:2px 4px 0; min-height:14px; }
+.msg-row .msg a { color:inherit; text-decoration:underline; }
+.thumb { max-width:220px; max-height:260px; border-radius:8px; display:block; }
+.attach { cursor:pointer; font-size:20px; padding:0 8px; align-self:center; }
+#more { margin:4px auto; }
+.card.wide { width:calc(100% - 32px); max-width:640px; }
+.admin h2 { font-size:16px; margin:16px 0 4px; }

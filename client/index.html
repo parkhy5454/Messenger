@@ -52,7 +52,7 @@
     </div>
   </section>
 
-  <!-- 비밀번호 찾기 (이메일 인증 코드로 재설정) -->
+  <!-- 비밀번호 찾기 -->
   <section id="view-reset" class="view" hidden>
     <div class="card">
       <h1>비밀번호 찾기</h1>
@@ -86,37 +86,98 @@
     </div>
   </section>
 
-  <!-- 메인: 친구 목록 + 채팅 -->
+  <!-- 프로필 -->
+  <section id="view-profile" class="view" hidden>
+    <div class="card">
+      <h1>프로필</h1>
+      <form id="profile-form">
+        <input id="pf-name" placeholder="이름 (1~20자)" maxlength="20" required />
+        <input id="pf-status" placeholder="상태 메시지 (60자 이내)" maxlength="60" />
+        <button type="submit" class="primary">저장</button>
+      </form>
+      <button id="profile-back" class="link" type="button">돌아가기</button>
+      <p id="pf-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 차단 목록 -->
+  <section id="view-blocks" class="view" hidden>
+    <div class="card">
+      <h1>차단 목록</h1>
+      <ul id="block-list" class="plain"></ul>
+      <button id="blocks-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
+  <!-- 그룹 만들기 -->
+  <section id="view-group" class="view" hidden>
+    <div class="card">
+      <h1>그룹 만들기</h1>
+      <form id="gr-form">
+        <input id="gr-name" placeholder="그룹 이름 (1~30자)" maxlength="30" required />
+        <p class="muted">초대할 친구를 선택하세요.</p>
+        <div id="gr-friends" class="check-list"></div>
+        <button type="submit" class="primary">만들기</button>
+      </form>
+      <button id="gr-back" class="link" type="button">돌아가기</button>
+      <p id="gr-msg" class="msg-line"></p>
+    </div>
+  </section>
+
+  <!-- 관리자 -->
+  <section id="view-admin" class="view admin" hidden>
+    <div class="card wide">
+      <h1>관리자</h1>
+      <h2>신고 목록</h2>
+      <ul id="admin-reports" class="plain"></ul>
+      <h2>사용자</h2>
+      <ul id="admin-users" class="plain"></ul>
+      <button id="admin-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
+  <!-- 메인: 목록 + 채팅 -->
   <section id="view-main" class="view main" hidden>
     <aside class="side">
       <header>
         <strong id="me"></strong>
-        <span>
-          <button id="btn-pw" class="ghost" type="button">비번변경</button>
-          <button id="logout" class="ghost" type="button">로그아웃</button>
-        </span>
+        <button id="logout" class="ghost" type="button">로그아웃</button>
       </header>
+      <nav class="menu">
+        <button id="btn-profile" class="ghost" type="button">프로필</button>
+        <button id="btn-newgroup" class="ghost" type="button">그룹 만들기</button>
+        <button id="btn-blocks" class="ghost" type="button">차단 목록</button>
+        <button id="btn-pw" class="ghost" type="button">비번변경</button>
+        <button id="btn-admin" class="ghost" type="button" hidden>관리자</button>
+      </nav>
       <form id="add-form" class="add">
         <input id="add-input" placeholder="친구 아이디 추가" required />
         <button type="submit">추가</button>
       </form>
+      <input id="search" class="search" placeholder="이름·그룹 검색" />
       <div id="req-box" hidden>
         <p class="muted req-title">받은 친구 요청</p>
         <ul id="requests" class="friends"></ul>
       </div>
-      <ul id="friends" class="friends"></ul>
+      <ul id="list" class="friends"></ul>
     </aside>
 
     <main class="chat">
       <header>
-        <strong id="chat-title">친구를 선택하세요</strong>
-        <div id="chat-actions" hidden>
+        <strong id="chat-title">대화를 선택하세요</strong>
+        <div id="dm-actions" hidden>
           <button id="btn-block" class="ghost" type="button">차단</button>
           <button id="btn-report" class="ghost" type="button">신고</button>
         </div>
+        <div id="group-actions" hidden>
+          <button id="btn-gadd" class="ghost" type="button">초대</button>
+          <button id="btn-gleave" class="ghost" type="button">나가기</button>
+        </div>
       </header>
+      <button id="more" class="link" type="button" hidden>이전 메시지 더 보기</button>
       <div id="chat-box" class="box"></div>
       <form id="compose" hidden>
+        <label class="attach" title="파일 보내기">📎<input id="attach" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" hidden /></label>
         <input id="msg-input" placeholder="메시지 입력" maxlength="2000" autocomplete="off" />
         <button type="submit" class="primary">보내기</button>
       </form>
