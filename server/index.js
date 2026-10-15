@@ -1835,7 +1835,8 @@ app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
 }));
 
 // ---- 파일 업로드 / 다운로드 (DB 저장, 최대 2MB) ----
-const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain', 'application/octet-stream'];
+const AUDIO_MIME = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/mpeg'];
+const ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'text/plain', 'application/octet-stream', ...AUDIO_MIME];
 const INLINE_MIME = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
 app.post(
@@ -1868,7 +1869,7 @@ app.get('/api/files/:id', auth, wrap(async (req, res) => {
   );
   const f = rows[0];
   if (!f) return res.status(404).json({ error: '파일을 찾을 수 없습니다' });
-  const inline = INLINE_MIME.includes(f.mime);
+  const inline = INLINE_MIME.includes(f.mime) || AUDIO_MIME.includes(f.mime);
   res.set('Content-Type', inline ? f.mime : 'application/octet-stream');
   res.set('Content-Disposition', (inline ? 'inline' : 'attachment') + "; filename*=UTF-8''" + encodeURIComponent(f.name));
   res.set('X-Content-Type-Options', 'nosniff');
@@ -2057,7 +2058,7 @@ io.on('connection', (socket) => {
         const fr = await pool.query('SELECT mime FROM files WHERE id=$1 AND uploader_id=$2', [fileId, me]);
         if (!fr.rows[0]) return reply({ error: '파일을 찾을 수 없습니다' });
         // 암호화된 파일은 서버가 종류를 알 수 없으므로 'file'로 저장 (실제 종류는 클라이언트가 복호화 후 판단)
-        kind = enc ? 'file' : (INLINE_MIME.includes(fr.rows[0].mime) ? 'image' : 'file');
+        kind = enc ? 'file' : (INLINE_MIME.includes(fr.rows[0].mime) ? 'image' : (AUDIO_MIME.includes(fr.rows[0].mime) ? 'audio' : 'file'));
       }
 
       if (p.groupId) {
@@ -2277,6 +2278,7 @@ app.post('/api/push/unsubscribe', auth, wrap(async (req, res) => {
 function previewText(kind, text) {
   if (kind === 'image') return '사진';
   if (kind === 'file') return '파일';
+  if (kind === 'audio') return '음성 메시지';
   return String(text || '').slice(0, 100);
 }
 

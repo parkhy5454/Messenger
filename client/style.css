@@ -310,6 +310,7 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #gb-poll-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 
 .voice-btn { padding: 4px 8px; font-size: 18px; line-height: 1; }
+.voice-msg { display: block; max-width: 240px; width: 100%; }
 .voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.6; } }
 
