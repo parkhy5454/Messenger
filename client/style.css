@@ -312,3 +312,10 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .voice-btn { padding: 4px 8px; font-size: 18px; line-height: 1; }
 .voice-btn.on { background: #e5484d; color: #fff; border-radius: 6px; animation: voice-pulse 1.2s ease-in-out infinite; }
 @keyframes voice-pulse { 50% { opacity: 0.6; } }
+
+.clamp { max-height: 12em; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+.clamp.open { max-height: none; }
+.clamp-more { font-size: 13px; padding: 2px 0; }
+#summary-panel { display: flex; gap: 8px; align-items: flex-start; margin: 8px 12px 0; padding: 10px 12px; border-radius: 10px; background: rgba(127,127,127,0.14); }
+#summary-panel[hidden] { display: none; }
+#summary-text { flex: 1; margin: 0; white-space: pre-wrap; font-size: 14px; }

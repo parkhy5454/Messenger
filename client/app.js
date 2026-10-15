@@ -1013,6 +1013,31 @@ $('#af-find-form').onsubmit = async (e) => {
   }
 };
 
+const CLAMP_AT = 400;
+// ===== 대화 요약: 화면에 불러온 최근 글(최대 50개)을 요약. 저장하지 않음 =====
+$('#btn-summary').onclick = () => summarizeChat();
+$('#summary-close').onclick = () => { $('#summary-panel').hidden = true; };
+async function summarizeChat() {
+  if (!current) return;
+  const texts = chatMsgs.filter((m) => !m.deleted && !m.view_once && (!m.kind || m.kind === 'text') && m.text);
+  if (!texts.length) return alert('요약할 글이 없습니다');
+  if (texts.some((m) => m.enc) && !confirm('암호화된 대화입니다. 요약하려면 이 대화의 최근 글이 AI 서버(Anthropic)로 전송됩니다. 계속할까요?')) return;
+  const lines = texts.slice(-50).map((m) => ({
+    who: m.sender_id === me.id ? '나' : (m.sender_name || current.name || '상대'),
+    text: m.text.slice(0, 500),
+  }));
+  const panel = $('#summary-panel');
+  const out = $('#summary-text');
+  panel.hidden = false;
+  out.textContent = '요약 중...';
+  try {
+    const r = await api('/api/ai/summarize', { method: 'POST', body: JSON.stringify({ lines }) });
+    out.textContent = r.summary;
+  } catch (e) {
+    out.textContent = e.message;
+  }
+}
+
 // 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
 async function handleFriendLink() {
   const token = new URLSearchParams(location.search).get('friend');
@@ -1646,6 +1671,20 @@ function makeMsg(m, cont) {
       const t = document.createElement('div');
       t.textContent = m.text;
       bubble.appendChild(t);
+      if (m.text.length > CLAMP_AT) {
+        // 장문은 접어 두고 '더 보기'로 펼칩니다
+        t.className = 'clamp';
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'link clamp-more';
+        more.textContent = '더 보기';
+        more.onclick = (e) => {
+          e.stopPropagation();
+          const open = t.classList.toggle('open');
+          more.textContent = open ? '접기' : '더 보기';
+        };
+        bubble.appendChild(more);
+      }
     }
   }
 
