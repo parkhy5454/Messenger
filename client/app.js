@@ -1845,7 +1845,7 @@ function renderList() {
   }
 
   // 하단 탭의 "대화" 뱃지: 안 읽은 1:1 메시지 총합
-  const total = chats.reduce((sum, c) => sum + (c.type === 'dm' ? c.unread || 0 : 0), 0);
+  const total = chats.reduce((sum, c) => sum + (c.unread || 0), 0);
   const badge = $('#chat-badge');
   badge.hidden = !total;
   badge.textContent = total > 99 ? '99+' : String(total);
@@ -1886,7 +1886,7 @@ function chatItem(c) {
   time.className = 'row-time';
   time.textContent = c.last ? listTime(c.last.created_at) : '';
   side.appendChild(time);
-  if (c.type === 'dm' && c.unread) {
+  if (c.unread) {
     const b = document.createElement('b');
     b.className = 'badge';
     b.textContent = c.unread > 99 ? '99+' : c.unread;
@@ -1924,7 +1924,9 @@ async function openChat(t) {
   $('#compose').hidden = false;
   $('#chat-box').innerHTML = '';
   if (t.type === 'group') await syncGroupKeys(t.id).catch(() => {});
+  unreadAnchorId = t.type === 'group' ? await api('/api/groups/' + t.id + '/read').then((r) => r.lastReadId).catch(() => null) : null;
   await loadMessages(true);
+  if (t.type === 'group' && chatMsgs.length) markGroupRead(t.id, chatMsgs[chatMsgs.length - 1].id);
   if (t.type === 'dm') {
     socket.emit('read:dm', { userId: t.id });
     const c = chats.find((x) => x.type === 'dm' && x.id === t.id);
@@ -1949,12 +1951,35 @@ async function loadMessages(initial) {
 }
 $('#more').onclick = () => loadMessages(false);
 
+// 그룹을 열었을 때 마지막으로 읽었던 메시지 번호 (그 뒤부터 '안 읽은 메시지'로 표시)
+let unreadAnchorId = null;
+// 그룹 읽음 위치 저장 + 목록의 안 읽은 표시 지우기
+function markGroupRead(gid, lastId) {
+  const c = chats.find((x) => x.type === 'group' && x.id === gid);
+  if (c) {
+    c.unread = 0;
+    renderList();
+  }
+  api('/api/groups/' + gid + '/read', { method: 'POST', body: JSON.stringify({ lastId }) }).catch(() => {});
+}
 function renderChat(mode) {
   const box = $('#chat-box');
   const prevH = box.scrollHeight, prevTop = box.scrollTop;
   box.innerHTML = '';
   box.appendChild(buildMsgs(chatMsgs, null));
-  if (mode === 'bottom') box.scrollTop = box.scrollHeight;
+  let line = null;
+  if (unreadAnchorId != null) {
+    const first = chatMsgs.find((m) => m.id > unreadAnchorId && m.sender_id !== me.id);
+    const target = first && box.querySelector('[data-id="' + first.id + '"]');
+    if (target) {
+      line = document.createElement('div');
+      line.className = 'unread-line';
+      line.textContent = '여기부터 안 읽은 메시지';
+      target.before(line);
+    }
+  }
+  if (mode === 'bottom' && line) line.scrollIntoView({ block: 'center' });
+  else if (mode === 'bottom') box.scrollTop = box.scrollHeight;
   else box.scrollTop = prevTop + (box.scrollHeight - prevH);
 }
 
@@ -2205,7 +2230,8 @@ async function onMessage(raw) {
   const c = chats.find((x) => (isGroupMsg ? x.type === 'group' && x.id === m.group_id : x.type === 'dm' && x.id === other));
   if (c) {
     c.last = { text: m.text, kind: m.kind, created_at: m.created_at, sender_name: m.sender_name };
-    if (!isGroupMsg && m.sender_id !== me.id && !relevant) c.unread = (c.unread || 0) + 1;
+    if (m.sender_id !== me.id && !relevant) c.unread = (c.unread || 0) + 1;
+    if (isGroupMsg && relevant && m.sender_id !== me.id) markGroupRead(m.group_id, m.id);
     renderList();
   }
 }

@@ -338,3 +338,5 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .logout-btn { margin-left: auto; white-space: nowrap; }
 
 .logout-row { color: #e5484d !important; }
+
+.unread-line { text-align: center; font-size: 12px; opacity: 0.75; padding: 6px 0; margin: 8px 0; border-top: 1px dashed rgba(127,127,127,0.45); }

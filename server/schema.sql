@@ -327,3 +327,12 @@ CREATE TABLE IF NOT EXISTS phone_codes (
   expires_at TIMESTAMPTZ NOT NULL,
   attempts INT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS group_reads (
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  group_id INT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  last_msg_id BIGINT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, group_id)
+);
+CREATE INDEX IF NOT EXISTS messages_group_id ON messages (group_id, id);

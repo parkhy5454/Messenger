@@ -1571,7 +1571,9 @@ app.get('/api/chats', auth, wrap(async (req, res) => {
          (SELECT json_build_object('text', m.text, 'kind', m.kind, 'created_at', m.created_at, 'sender_name', su.name, 'enc', m.enc, 'key_epoch', m.key_epoch, 'file_id', m.file_id)
             FROM messages m JOIN users su ON su.id = m.sender_id
             WHERE m.group_id = g.id ORDER BY m.id DESC LIMIT 1) AS last,
-         0 AS unread
+         COALESCE((SELECT COUNT(*)::int FROM messages m, group_reads r
+           WHERE r.user_id = $1 AND r.group_id = g.id AND m.group_id = g.id
+             AND m.sender_id <> $1 AND m.id > r.last_msg_id), 0) AS unread
        FROM groups g JOIN group_members gm ON gm.group_id = g.id AND gm.user_id = $1
      )
      SELECT * FROM dm UNION ALL SELECT * FROM grp`,
@@ -1795,6 +1797,25 @@ app.post('/api/groups/:id/leave', auth, wrap(async (req, res) => {
   await pool.query('DELETE FROM group_keys WHERE group_id=$1 AND user_id=$2', [groupId, req.user.id]);
   // 암호화 그룹이면 다음 동기화 때 키를 새로 만들어서 나간 사람이 새 메시지를 못 읽게 합니다
   await pool.query('UPDATE groups SET needs_rotate = true WHERE id=$1 AND enc = true', [groupId]);
+  res.json({ ok: true });
+}));
+
+// ---- 그룹 읽음 위치: 사용자별로 마지막으로 읽은 메시지 번호를 기억 ----
+app.get('/api/groups/:id/read', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const { rows } = await pool.query('SELECT last_msg_id FROM group_reads WHERE user_id=$1 AND group_id=$2', [req.user.id, gid]);
+  res.json({ lastReadId: rows[0] ? Number(rows[0].last_msg_id) : null });
+}));
+app.post('/api/groups/:id/read', auth, wrap(async (req, res) => {
+  const gid = Number(req.params.id);
+  if (!(await isGroupMember(gid, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
+  const last = Number((req.body || {}).lastId);
+  if (!Number.isSafeInteger(last) || last <= 0) return res.status(400).json({ error: '잘못된 요청입니다' });
+  await pool.query(
+    `INSERT INTO group_reads (user_id, group_id, last_msg_id) VALUES ($1,$2,$3)
+     ON CONFLICT (user_id, group_id) DO UPDATE SET last_msg_id = GREATEST(group_reads.last_msg_id, EXCLUDED.last_msg_id), updated_at = now()`,
+    [req.user.id, gid, last]);
   res.json({ ok: true });
 }));
 
