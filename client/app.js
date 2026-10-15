@@ -802,6 +802,42 @@ function onViewed(v) {
   renderChat('keep');
 }
 
+// ---------- 대화 내보내기 (복호화된 텍스트 파일) ----------
+$('#btn-export').onclick = () => exportChat().catch((err) => alert(err.message));
+async function exportChat() {
+  if (!current) return;
+  if (!confirm('대화 내용을 텍스트 파일로 저장합니다. 사진과 파일 자체는 포함되지 않고 이름만 적힙니다. 계속할까요?')) return;
+  if (current.type === 'group') await syncGroupKeys(current.id).catch(() => {});
+  const all = [];
+  let before = null;
+  for (;;) {
+    const raw = await api(historyPath(current, before));
+    if (!raw.length) break;
+    const rows = await Promise.all(raw.map((m) => decryptMsg(m)));
+    all.unshift(...rows);
+    before = rows[0].id;
+    if (raw.length < 50) break;
+  }
+  const lines = all.map((m) => {
+    const who = m.sender_id === me.id ? me.name : (m.sender_name || current.name);
+    const when = new Date(m.created_at).toLocaleString('ko-KR');
+    let body;
+    if (m.deleted) body = '(삭제된 메시지)';
+    else if (m.view_once) body = '(한 번만 보기 사진)';
+    else if (m.kind === 'image') body = '[사진] ' + (m.file_name || '');
+    else if (m.kind === 'file') body = '[파일] ' + (m.file_name || '');
+    else body = m.text || '';
+    return '[' + when + '] ' + who + ': ' + body + (m.edited_at ? ' (수정됨)' : '');
+  });
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '대화내보내기-' + current.name + '-' + new Date().toISOString().slice(0, 10) + '.txt';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 // ---------- 시작 / 소켓 ----------
 async function start() {
   try {
