@@ -787,9 +787,7 @@ async function forwardMsg(m) {
     .sort((a, b) => (b.last ? Date.parse(b.last.created_at) : 0) - (a.last ? Date.parse(a.last.created_at) : 0))
     .slice(0, 50);
   if (!targets.length) return alert('전달할 대화가 없습니다. 친구나 그룹 대화가 있어야 합니다.');
-  openSheet([['📨 전달할 대화를 고르세요', () => {}]].concat(
-    targets.map((c) => [(c.type === 'group' ? '👥 ' : '') + c.name, () => forwardTo(m, c)])
-  ));
+  openSheet(targets.map((c) => [(c.type === 'group' ? '👥 ' : '') + c.name, () => forwardTo(m, c)]));
 }
 async function forwardTo(m, target) {
   const prev = current;
