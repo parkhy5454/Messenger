@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { pool, init } = require('./db');
 const { limit } = require('./ratelimit');
+const webpush = require('web-push');
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -661,6 +662,14 @@ io.on('connection', (socket) => {
         const nm = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
         const msg = { ...rows[0], sender_name: nm.rows[0] ? nm.rows[0].name : '' };
         for (const m of members.rows) io.to('user:' + m.user_id).emit('message:new', msg);
+        // 그룹 푸시 알림 (보낸 사람 제외)
+        const gname = await pool.query('SELECT name FROM groups WHERE id=$1', [groupId]);
+        notifyUsers(members.rows.map((r) => r.user_id), {
+          title: gname.rows[0] ? gname.rows[0].name : '그룹',
+          body: msg.sender_name + ': ' + previewText(kind, text),
+          tag: 'group-' + groupId,
+          url: '/',
+        }, me).catch(() => {});
         return reply({ ok: true });
       }
 
@@ -681,6 +690,14 @@ io.on('connection', (socket) => {
         [me, to, text, kind, fileId]
       );
       io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
+      // 1:1 푸시 알림
+      const sn = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
+      notifyUsers([to], {
+        title: sn.rows[0] ? sn.rows[0].name : '새 메시지',
+        body: previewText(kind, text),
+        tag: 'dm-' + me,
+        url: '/',
+      }, me).catch(() => {});
       reply({ ok: true });
     } catch (e) {
       console.error(e);
@@ -706,9 +723,83 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---- 푸시 알림 (웹 푸시) ----
+// VAPID 키: 환경변수(VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)가 있으면 그 값을 쓰고, 없으면 DB에 자동 생성·저장합니다.
+let VAPID_PUBLIC = null;
+async function ensureVapid() {
+  let pub = process.env.VAPID_PUBLIC_KEY;
+  let priv = process.env.VAPID_PRIVATE_KEY;
+  if (!pub || !priv) {
+    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key='vapid'");
+    if (rows[0]) {
+      const v = JSON.parse(rows[0].value);
+      pub = v.publicKey;
+      priv = v.privateKey;
+    } else {
+      const k = webpush.generateVAPIDKeys();
+      pub = k.publicKey;
+      priv = k.privateKey;
+      await pool.query(
+        "INSERT INTO app_settings (key, value) VALUES ('vapid', $1) ON CONFLICT (key) DO NOTHING",
+        [JSON.stringify({ publicKey: pub, privateKey: priv })]
+      );
+    }
+  }
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@messenger.local', pub, priv);
+  VAPID_PUBLIC = pub;
+}
+
+app.get('/api/push/key', auth, (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC });
+});
+
+app.post('/api/push/subscribe', auth, wrap(async (req, res) => {
+  const s = (req.body || {}).subscription || {};
+  if (!s.endpoint || !s.keys || !s.keys.p256dh || !s.keys.auth) {
+    return res.status(400).json({ error: '잘못된 구독 정보입니다' });
+  }
+  await pool.query(
+    `INSERT INTO push_subs (user_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (endpoint) DO UPDATE SET user_id=$1, p256dh=$3, auth=$4`,
+    [req.user.id, s.endpoint, s.keys.p256dh, s.keys.auth]
+  );
+  res.status(201).json({ ok: true });
+}));
+
+app.post('/api/push/unsubscribe', auth, wrap(async (req, res) => {
+  await pool.query('DELETE FROM push_subs WHERE endpoint=$1 AND user_id=$2',
+    [String((req.body || {}).endpoint || ''), req.user.id]);
+  res.json({ ok: true });
+}));
+
+function previewText(kind, text) {
+  if (kind === 'image') return '사진';
+  if (kind === 'file') return '파일';
+  return String(text || '').slice(0, 100);
+}
+
+// 앱이 연결되어 있지 않은 사용자에게만 푸시를 보냅니다 (연결 중이면 소켓으로 이미 받음)
+async function notifyUsers(userIds, payload, exceptUserId) {
+  const targets = [...new Set(userIds)].filter((id) => id !== exceptUserId && !io.sockets.adapter.rooms.get('user:' + id));
+  if (!targets.length) return;
+  const { rows } = await pool.query(
+    'SELECT id, endpoint, p256dh, auth FROM push_subs WHERE user_id = ANY($1::int[])',
+    [targets]
+  );
+  const body = JSON.stringify(payload);
+  await Promise.all(rows.map((s) =>
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, body, { TTL: 3600 })
+      .catch(async (e) => {
+        if (e.statusCode === 404 || e.statusCode === 410) await pool.query('DELETE FROM push_subs WHERE id=$1', [s.id]);
+        else console.error('푸시 발송 실패:', e.statusCode || e.message);
+      })
+  ));
+}
+
 const PORT = process.env.PORT || 3000;
 init()
-  .then(() => {
+  .then(async () => {
+    await ensureVapid();
     // 하루가 지난 미인증 계정 자동 삭제 (1시간마다 확인)
     const purge = () =>
       pool

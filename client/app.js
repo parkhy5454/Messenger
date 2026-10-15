@@ -369,6 +369,7 @@ async function start() {
   await loadRequests();
   await loadList();
   connectSocket();
+  enablePush(true).catch(() => {}); // 이미 허용된 경우에만 조용히 구독
 }
 
 function connectSocket() {
@@ -809,7 +810,52 @@ $('#btn-gleave').onclick = async () => {
   }
 };
 
-function logout() {
+// ---------- 푸시 알림 ----------
+function urlB64ToUint8(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// silent=true: 이미 허용된 경우에만 구독 (화면 시작 시). false: 권한 요청 포함 (버튼 클릭 시)
+async function enablePush(silent) {
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!supported) {
+    if (!silent) alert('이 브라우저에서는 알림을 쓸 수 없습니다.\n아이폰은 사파리에서 "홈 화면에 추가" 후 앱을 열어 주세요.');
+    return false;
+  }
+  if (Notification.permission === 'default' && !silent) {
+    const p = await Notification.requestPermission();
+    if (p !== 'granted') { alert('알림이 허용되지 않았습니다.'); return false; }
+  }
+  if (Notification.permission !== 'granted') return false;
+
+  const reg = await navigator.serviceWorker.ready;
+  const { publicKey } = await api('/api/push/key');
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(publicKey) });
+  }
+  await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+  if (!silent) alert('알림이 켜졌습니다. 앱을 닫아도 새 메시지 알림을 받을 수 있습니다.');
+  return true;
+}
+
+async function disablePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+  await sub.unsubscribe();
+}
+
+$('#btn-notify').onclick = () => enablePush(false).catch((err) => alert(err.message));
+
+async function logout() {
+  await disablePush().catch(() => {});
   localStorage.removeItem('token');
   token = null;
   if (socket) socket.disconnect();
