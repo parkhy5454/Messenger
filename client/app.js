@@ -386,6 +386,47 @@ function setTab(t) {
   $('#auth-msg').textContent = '';
 }
 
+// ---------- QR 기기 승인 로그인 ----------
+let qrLogin = null;
+function stopQrLogin(msg) {
+  if (qrLogin) clearInterval(qrLogin.timer);
+  qrLogin = null;
+  $('#qr-login').hidden = true;
+  if (msg) $('#auth-msg').textContent = msg;
+}
+$('#qr-login-btn').onclick = async () => {
+  stopQrLogin('');
+  try {
+    const r = await api('/api/auth/qr/start', { method: 'POST', body: '{}' });
+    $('#qr-img').src = r.qr;
+    $('#qr-code').textContent = r.code;
+    $('#qr-status').textContent = '승인을 기다리는 중입니다';
+    $('#qr-login').hidden = false;
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - started > r.expiresIn * 1000) return stopQrLogin('승인 시간이 지났습니다. 다시 시도하세요');
+      try {
+        const p = await api('/api/auth/qr/poll', { method: 'POST', body: JSON.stringify({ id: r.id, secret: r.secret }) });
+        if (p.status === 'approved') {
+          stopQrLogin();
+          token = p.token;
+          localStorage.setItem('token', token);
+          pendingPassword = null;
+          await start();
+        } else if (p.status === 'expired') {
+          stopQrLogin('승인 요청이 만료되었습니다. 다시 시도하세요');
+        }
+      } catch (err) {
+        stopQrLogin(err.message);
+      }
+    }, 2000);
+    qrLogin = { timer };
+  } catch (err) {
+    $('#auth-msg').textContent = err.message;
+  }
+};
+$('#qr-cancel').onclick = () => stopQrLogin('');
+
 let pendingOtp = null;
 $('#login-form').onsubmit = async (e) => {
   e.preventDefault();
@@ -1479,6 +1520,23 @@ $('#pf-find-form').onsubmit = async (e) => {
 };
 
 // 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
+// 다른 기기가 QR로 요청한 로그인을 승인합니다 (QR을 열면 ?approve=요청ID 로 들어옵니다)
+async function handleApproveLink() {
+  const id = new URLSearchParams(location.search).get('approve');
+  if (!id || !token) return;
+  history.replaceState(null, '', location.pathname);
+  try {
+    const info = await api('/api/auth/qr/info?id=' + encodeURIComponent(id));
+    if (!confirm('새 기기에서 이 계정으로 로그인을 요청했습니다.\n요청 기기: ' + info.device + '\n\n본인이 요청한 것이 맞으면 확인을 누르세요.')) return;
+    const code = prompt('새 기기 화면에 보이는 6자리 승인 코드를 입력하세요');
+    if (!code) return;
+    await api('/api/auth/qr/approve', { method: 'POST', body: JSON.stringify({ id, code: code.trim() }) });
+    alert('승인되었습니다. 새 기기에서 로그인됩니다.');
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 async function handleFriendLink() {
   const token = new URLSearchParams(location.search).get('friend');
   if (!token) return;
@@ -1750,6 +1808,7 @@ async function enterMain() {
   handleBillingReturn();
   loadMutes().catch(() => {});
   handleFriendLink().catch(() => {});
+  handleApproveLink().catch(() => {});
   renderReceiptsBtn();
   renderVisBtns();
   await loadRequests();

@@ -212,6 +212,74 @@ app.post('/api/auth/login', limit({ windowMs: 15 * 60 * 1000, max: 20, key: (req
 }));
 
 // 카카오 로그인 (KAKAO_REST_KEY, KAKAO_REDIRECT_URI 설정 후 동작)
+// ---- QR 기기 승인 로그인 ----
+// 새 기기가 요청을 만들고 6자리 코드와 QR을 보여줍니다. 로그인된 다른 기기에서 QR을 열고 코드를 입력하면 승인되고,
+// 새 기기는 폴링으로 세션 토큰을 받습니다. 비밀번호는 오가지 않으며, 코드와 폴링 비밀값은 해시로만 저장합니다.
+const qrHash = (s) => require('crypto').createHmac('sha256', require('crypto').createHash('sha256').update('qr-login:' + JWT_SECRET).digest()).update(String(s)).digest('hex');
+const qrSafeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && require('crypto').timingSafeEqual(x, y); };
+
+app.post('/api/auth/qr/start', limit({ windowMs: 15 * 60 * 1000, max: 10, key: (req) => 'qrstart:' + req.ip }), wrap(async (req, res) => {
+  const crypto = require('crypto');
+  await pool.query("DELETE FROM login_requests WHERE expires_at < now() - interval '1 hour'");
+  const id = crypto.randomBytes(16).toString('hex');
+  const secret = crypto.randomBytes(24).toString('base64url');
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  await pool.query(
+    "INSERT INTO login_requests (id, secret_hash, code_hash, ua, expires_at) VALUES ($1,$2,$3,$4, now() + interval '3 minutes')",
+    [id, qrHash(secret), qrHash(id + ':' + code), String(req.headers['user-agent'] || '').slice(0, 300)]
+  );
+  const base = process.env.PUBLIC_URL || (req.protocol + '://' + req.get('host'));
+  const qr = await require('qrcode').toDataURL(base.replace(/\/$/, '') + '/?approve=' + id, { margin: 1, width: 220 });
+  res.status(201).json({ id, secret, code, qr, expiresIn: 180 });
+}));
+
+// 승인하는 기기(로그인된 상태)가 요청 정보를 확인합니다
+app.get('/api/auth/qr/info', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query(
+    "SELECT ua FROM login_requests WHERE id=$1 AND status='pending' AND expires_at > now()",
+    [String(req.query.id || '')]
+  );
+  if (!rows[0]) return res.status(404).json({ error: '유효하지 않거나 만료된 요청입니다' });
+  res.json({ device: deviceName(rows[0].ua) });
+}));
+
+// 승인: 새 기기에 표시된 6자리 코드를 입력해야 승인됩니다 (QR만 본 사람이 승인하는 것을 막음)
+app.post('/api/auth/qr/approve', auth, limit({ windowMs: 60 * 60 * 1000, max: 30, key: (req) => 'qrapprove:' + req.user.id }), wrap(async (req, res) => {
+  const id = String((req.body || {}).id || '');
+  const code = String((req.body || {}).code || '').trim();
+  const { rows } = await pool.query(
+    "SELECT code_hash, attempts FROM login_requests WHERE id=$1 AND status='pending' AND expires_at > now()",
+    [id]
+  );
+  const r = rows[0];
+  if (!r) return res.status(404).json({ error: '유효하지 않거나 만료된 요청입니다' });
+  if (r.attempts >= 5) return res.status(429).json({ error: '시도 횟수를 넘었습니다. 새 기기에서 다시 시작하세요' });
+  if (!qrSafeEq(r.code_hash, qrHash(id + ':' + code))) {
+    await pool.query('UPDATE login_requests SET attempts = attempts + 1 WHERE id=$1', [id]);
+    return res.status(400).json({ error: '코드가 맞지 않습니다' });
+  }
+  await pool.query("UPDATE login_requests SET user_id=$2, status='approved' WHERE id=$1 AND status='pending'", [id, req.user.id]);
+  res.json({ ok: true });
+}));
+
+// 새 기기 폴링: 승인되면 그 시점에 한 번만 토큰을 발급합니다
+app.post('/api/auth/qr/poll', limit({ windowMs: 60 * 1000, max: 60, key: (req) => 'qrpoll:' + req.ip }), wrap(async (req, res) => {
+  const id = String((req.body || {}).id || '');
+  const secret = String((req.body || {}).secret || '');
+  const { rows } = await pool.query('SELECT secret_hash, status, (expires_at > now()) AS live FROM login_requests WHERE id=$1', [id]);
+  const r = rows[0];
+  if (!r || !qrSafeEq(r.secret_hash, qrHash(secret))) return res.status(404).json({ error: '유효하지 않은 요청입니다' });
+  if (!r.live) return res.json({ status: 'expired' });
+  if (r.status === 'pending') return res.json({ status: 'pending' });
+  const claimed = await pool.query("UPDATE login_requests SET status='consumed' WHERE id=$1 AND status='approved' RETURNING user_id", [id]);
+  if (!claimed.rows[0]) return res.json({ status: 'expired' });
+  const { rows: ur } = await pool.query('SELECT id, username, banned, email_verified FROM users WHERE id=$1', [claimed.rows[0].user_id]);
+  const u = ur[0];
+  if (!u || u.banned) return res.status(403).json({ error: '이용이 제한된 계정입니다' });
+  if (!u.email_verified) return res.status(403).json({ error: '이메일 인증을 먼저 완료하세요' });
+  res.json({ status: 'approved', token: await issueFor(u, req) });
+}));
+
 app.get('/api/auth/kakao', (req, res) => {
   if (!process.env.KAKAO_REST_KEY) return res.status(501).send('카카오 로그인이 설정되지 않았습니다.');
   const url = 'https://kauth.kakao.com/oauth/authorize?' + new URLSearchParams({

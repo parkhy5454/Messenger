@@ -31,6 +31,15 @@
         <button id="go-forgot" class="link" type="button">비밀번호를 잊으셨나요?</button>
       </form>
 
+      <div id="qr-login" class="qr-login" hidden>
+        <p>이미 로그인된 기기에서 아래 QR을 열고, 이 화면의 코드를 입력하세요.</p>
+        <img id="qr-img" alt="기기 승인 QR" />
+        <p class="qr-code-line">승인 코드 <strong id="qr-code"></strong></p>
+        <p id="qr-status" class="muted"></p>
+        <button id="qr-cancel" class="ghost" type="button">취소</button>
+      </div>
+      <button id="qr-login-btn" class="link" type="button">다른 기기 승인으로 로그인 (QR)</button>
+
       <form id="signup-form" hidden>
         <input id="su-user" placeholder="아이디 (영소문자·숫자·_ 3~20자)" required />
         <input id="su-name" placeholder="이름" required />

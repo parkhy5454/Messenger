@@ -336,3 +336,14 @@ CREATE TABLE IF NOT EXISTS group_reads (
   PRIMARY KEY (user_id, group_id)
 );
 CREATE INDEX IF NOT EXISTS messages_group_id ON messages (group_id, id);
+
+CREATE TABLE IF NOT EXISTS login_requests (
+  id TEXT PRIMARY KEY,
+  secret_hash TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  ua TEXT NOT NULL DEFAULT '',
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  attempts INT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMPTZ NOT NULL
+);
