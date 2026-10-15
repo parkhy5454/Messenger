@@ -327,3 +327,6 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 .kk-row { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.2); }
 .kk-meta { font-size: 12px; opacity: 0.7; }
 .kk-text { white-space: pre-wrap; word-break: break-word; }
+
+.kk-sys { text-align: center; }
+.kk-sys .kk-text { font-style: italic; opacity: 0.7; }

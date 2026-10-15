@@ -1040,7 +1040,7 @@ async function summarizeChat() {
 
 // ===== 카톡 대화 가져오기: 이 기기(IndexedDB)에만 보관. 서버로 보내지 않음 =====
 const KK_MAX_BYTES = 30 * 1024 * 1024;
-let kkPending = null;
+let kkPending = null; // [{ title, messages }]
 let kkArchive = null;
 let kkShown = 300;
 const kkIndexKey = () => 'kakao:' + me.id + ':index';
@@ -1056,7 +1056,7 @@ function openKakaoImport() {
   kkPending = null;
   $('#kk-file').value = '';
   $('#kk-name').value = '';
-  $('#kk-name').placeholder = '표시 이름 (비우면 카톡 대화방 이름)';
+  $('#kk-name').placeholder = '표시 이름 (비우면 대화방 이름)';
   $('#kk-preview').textContent = '';
   $('#kk-msg').textContent = '';
   showView('kakaoimport');
@@ -1102,22 +1102,29 @@ async function kkRemove(id, title) {
   }
 }
 async function kkSave() {
-  if (!kkPending || !kkPending.messages.length) {
-    $('#kk-msg').textContent = '가져올 메시지가 없습니다. 카톡에서 내보낸 텍스트 파일(.txt)인지 확인하세요';
+  const chats = (kkPending || []).filter((c) => c.messages.length);
+  if (!chats.length) {
+    $('#kk-msg').textContent = '가져올 메시지가 없습니다. 카톡 내보내기(.txt) 또는 전체 내보내기(.json) 파일인지 확인하세요';
     return;
   }
-  const id = Date.now().toString(36);
-  const title = $('#kk-name').value.trim() || kkPending.title;
-  const archive = { id, title, count: kkPending.messages.length, imported_at: new Date().toISOString(), messages: kkPending.messages };
+  const typed = $('#kk-name').value.trim();
   try {
-    await E2EE.saveKV(kkKey(id), archive);
-    const list = await kkList();
-    list.unshift({ id, title, count: archive.count });
+    let list = await kkList();
+    let n = 0;
+    for (const c of chats) {
+      const id = Date.now().toString(36) + '-' + n;
+      const title = chats.length === 1 && typed ? typed : c.title;
+      const archive = { id, title, count: c.messages.length, imported_at: new Date().toISOString(), messages: c.messages };
+      await E2EE.saveKV(kkKey(id), archive);
+      list = [{ id, title, count: archive.count }].concat(list);
+      n += 1;
+    }
     await E2EE.saveKV(kkIndexKey(), list);
     kkPending = null;
     $('#kk-file').value = '';
+    $('#kk-name').value = '';
     $('#kk-preview').textContent = '';
-    $('#kk-msg').textContent = '저장했습니다.';
+    $('#kk-msg').textContent = n + '개 대화를 저장했습니다.';
     renderKkList();
   } catch (e) {
     $('#kk-msg').textContent = '저장에 실패했습니다: ' + e.message;
@@ -1150,10 +1157,11 @@ function renderKkView() {
   box.innerHTML = '';
   for (const m of shown) {
     const row = document.createElement('div');
-    row.className = 'kk-row';
+    row.className = 'kk-row' + (m.sys ? ' kk-sys' : '');
     const meta = document.createElement('div');
     meta.className = 'kk-meta';
-    meta.textContent = new Date(m.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) + ' · ' + m.from;
+    const when = new Date(m.at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+    meta.textContent = m.sys ? when : when + ' · ' + m.from;
     const text = document.createElement('div');
     text.className = 'kk-text';
     text.textContent = m.text;
@@ -1171,15 +1179,34 @@ $('#kk-file').onchange = async () => {
   if (!f) return;
   if (f.size > KK_MAX_BYTES) return ($('#kk-msg').textContent = '파일이 너무 큽니다 (30MB 이하)');
   try {
-    const parsed = KakaoImport.parse(await f.text());
-    if (!parsed.messages.length) return ($('#kk-msg').textContent = '카톡 대화 형식이 아닌 것 같습니다');
-    kkPending = parsed;
-    const first = new Date(parsed.messages[0].at).toLocaleDateString('ko-KR');
-    const last = new Date(parsed.messages[parsed.messages.length - 1].at).toLocaleDateString('ko-KR');
-    $('#kk-name').placeholder = parsed.title;
-    $('#kk-preview').textContent = parsed.title + ' · 메시지 ' + parsed.messages.length + '개 · ' + first + ' ~ ' + last;
+    const text = await f.text();
+    let chats;
+    if (/\.json$/i.test(f.name)) {
+      // 전체 데이터 내보내기 파일에 들어 있는 가져온 대화만 다시 불러옵니다
+      const data = JSON.parse(text);
+      const src = Array.isArray(data && data.imported_chats) ? data.imported_chats : [];
+      chats = src
+        .filter((c) => c && Array.isArray(c.messages) && c.messages.length)
+        .map((c) => ({
+          title: String(c.title || '카톡 대화').slice(0, 60),
+          messages: c.messages.map((m) => ({ at: m.at, from: String(m.from || ''), text: String(m.text || ''), sys: !!m.system || !!m.sys })),
+        }));
+      if (!chats.length) return ($('#kk-msg').textContent = '가져온 대화가 들어 있는 내보내기 파일이 아닙니다');
+    } else {
+      const parsed = KakaoImport.parse(text);
+      if (!parsed.messages.length) return ($('#kk-msg').textContent = '카톡 대화 형식이 아닌 것 같습니다');
+      chats = [{ title: parsed.title, messages: parsed.messages }];
+    }
+    kkPending = chats;
+    const total = chats.reduce((n, c) => n + c.messages.length, 0);
+    const first = new Date(chats[0].messages[0].at).toLocaleDateString('ko-KR');
+    const lastMsgs = chats[chats.length - 1].messages;
+    const last = new Date(lastMsgs[lastMsgs.length - 1].at).toLocaleDateString('ko-KR');
+    const label = chats.length === 1 ? chats[0].title : chats.length + '개 대화';
+    $('#kk-name').placeholder = chats.length === 1 ? chats[0].title : '여러 대화는 원래 이름으로 저장됩니다';
+    $('#kk-preview').textContent = label + ' · 메시지 ' + total + '개 · ' + first + ' ~ ' + last;
   } catch (err) {
-    $('#kk-msg').textContent = err.message;
+    $('#kk-msg').textContent = '파일을 읽을 수 없습니다: ' + err.message;
   }
 };
 $('#kk-save').onclick = () => kkSave();
@@ -3006,6 +3033,12 @@ async function exportAll() {
         })),
       });
       msg.textContent = '내보내는 중... ' + (i + 1) + ' / ' + chats.length;
+    }
+    // 가져온 카톡 대화도 함께 저장 (다른 기기에서 다시 가져올 수 있도록)
+    out.imported_chats = [];
+    for (const a of await kkList()) {
+      const full = await E2EE.loadKV(kkKey(a.id)).catch(() => null);
+      if (full) out.imported_chats.push({ title: full.title, imported_at: full.imported_at, messages: full.messages.map((m) => ({ at: m.at, from: m.from, text: m.text, system: !!m.sys })) });
     }
     const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);

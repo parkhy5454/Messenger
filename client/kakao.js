@@ -3,6 +3,9 @@ const KakaoImport = (() => {
   // 예: 2026. 10. 15. 오후 3:00, 홍길동 : 안녕하세요   (새 형식: 2026년 10월 15일 오후 3:00, ...)
   const LINE = /^(\d{4})\s*[.년]\s*(\d{1,2})\s*[.월]\s*(\d{1,2})\s*[.일]?\.?\s*(오전|오후)\s*(\d{1,2}):(\d{2})\s*,\s*(.+?)\s*:\s?(.*)$/;
   const DAY_SEP = /^-{3,}.*-{3,}\s*$/;
+  // 입장·퇴장·초대 같은 시스템 줄: 날짜 뒤에 ' : ' 없이 문장이 옴
+  const SYS = /^(\d{4})\s*[.년]\s*(\d{1,2})\s*[.월]\s*(\d{1,2})\s*[.일]?\.?\s*(오전|오후)\s*(\d{1,2}):(\d{2})\s*,\s*(.+)$/;
+  const SYS_WORD = /(님이 |들어왔|나갔|초대|내보냈|강퇴|방장)/;
 
   function toDate(y, mo, d, ap, h, mi) {
     let hh = Number(h) % 12; // 오전 12시 = 0시, 오후 12시 = 12시
@@ -34,6 +37,12 @@ const KakaoImport = (() => {
           from: m[7],
           text: m[8],
         });
+        continue;
+      }
+      const S = SYS.exec(line);
+      if (S && SYS_WORD.test(S[7])) {
+        blanks = 0;
+        messages.push({ at: toDate(S[1], S[2], S[3], S[4], S[5], S[6]).toISOString(), from: '', text: S[7].trim(), sys: true });
         continue;
       }
       if (line === '') { blanks += 1; continue; }
