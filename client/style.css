@@ -231,3 +231,13 @@ button.link { background: none; border: none; color: var(--sub); font-size: 14px
 #view-pw .card, #view-profile .card, #view-blocks .card, #view-group .card, #view-admin .card {
   margin: 0 auto; box-shadow: none; border-radius: 0; max-width: 720px; width: 100%; padding: 16px;
 }
+
+/* 메시지 메뉴 / 답장·수정 바 / 인용 */
+#msg-menu { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; z-index: 50; }
+#msg-menu[hidden] { display: none; }
+#msg-menu-sheet { background: #fff; width: 100%; padding: 12px; border-radius: 14px 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
+#msg-menu-box { display: flex; flex-direction: column; gap: 8px; }
+#compose-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #f3f3f3; font-size: 13px; }
+#compose-bar[hidden] { display: none; }
+#compose-bar-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.quote { border-left: 3px solid #999; padding: 2px 6px; margin-bottom: 4px; font-size: 12px; color: #666; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }

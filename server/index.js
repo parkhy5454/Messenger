@@ -512,7 +512,7 @@ app.get('/api/messages/:userId', auth, wrap(async (req, res) => {
   const me = req.user.id;
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc,
+    `SELECT id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to, edited_at, deleted,
        (SELECT name FROM files WHERE id = messages.file_id) AS file_name
      FROM messages
      WHERE ((sender_id=$1 AND recipient_id=$2) OR (sender_id=$2 AND recipient_id=$1)) AND id < $3
@@ -676,7 +676,7 @@ app.get('/api/groups/:id/messages', auth, wrap(async (req, res) => {
   if (!(await isGroupMember(groupId, req.user.id))) return res.status(403).json({ error: '그룹 멤버가 아닙니다' });
   const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
   const { rows } = await pool.query(
-    `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at, m.enc, m.key_epoch,
+    `SELECT m.id, m.sender_id, m.group_id, u.name AS sender_name, m.text, m.kind, m.file_id, m.created_at, m.enc, m.key_epoch, m.reply_to, m.edited_at, m.deleted,
        (SELECT name FROM files WHERE id = m.file_id) AS file_name
      FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.group_id=$1 AND m.id < $2 ORDER BY m.id DESC LIMIT 50`,
@@ -790,6 +790,7 @@ io.on('connection', (socket) => {
       const text = String(p.text || '').trim();
       const fileId = p.fileId ? Number(p.fileId) : null;
       const enc = !!p.enc;
+      const replyTo = p.replyTo ? Number(p.replyTo) : null;
       if (!text && !fileId) return reply({ error: '메시지를 입력하세요' });
       if (text.length > (enc ? 20000 : 2000)) return reply({ error: '메시지는 2000자 이내로 입력하세요' });
 
@@ -812,10 +813,10 @@ io.on('connection', (socket) => {
         if (enc && Number(p.epoch) !== gr.rows[0].epoch) return reply({ error: 'KEY_STALE' });
         const keyEpoch = enc ? gr.rows[0].epoch : null;
         const { rows } = await pool.query(
-          `INSERT INTO messages (sender_id, group_id, text, kind, file_id, enc, key_epoch) VALUES ($1,$2,$3,$4,$5,$6,$7)
-           RETURNING id, sender_id, group_id, text, kind, file_id, created_at, enc, key_epoch,
+          `INSERT INTO messages (sender_id, group_id, text, kind, file_id, enc, key_epoch, reply_to) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           RETURNING id, sender_id, group_id, text, kind, file_id, created_at, enc, key_epoch, reply_to,
              (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
-          [me, groupId, text, kind, fileId, enc, keyEpoch]
+          [me, groupId, text, kind, fileId, enc, keyEpoch, replyTo]
         );
         const members = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [groupId]);
         const nm = await pool.query('SELECT name FROM users WHERE id=$1', [me]);
@@ -843,10 +844,10 @@ io.on('connection', (socket) => {
       if (!f.rows[0]) return reply({ error: '친구에게만 메시지를 보낼 수 있습니다' });
 
       const { rows } = await pool.query(
-        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc) VALUES ($1,$2,$3,$4,$5,$6)
-         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc,
+        `INSERT INTO messages (sender_id, recipient_id, text, kind, file_id, enc, reply_to) VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, sender_id, recipient_id, text, kind, file_id, read_at, created_at, enc, reply_to,
            (SELECT name FROM files WHERE id = messages.file_id) AS file_name`,
-        [me, to, text, kind, fileId, enc]
+        [me, to, text, kind, fileId, enc, replyTo]
       );
       io.to(['user:' + to, 'user:' + me]).emit('message:new', rows[0]);
       // 1:1 푸시 알림
@@ -857,6 +858,58 @@ io.on('connection', (socket) => {
         tag: 'dm-' + me,
         url: '/',
       }, me).catch(() => {});
+      reply({ ok: true });
+    } catch (e) {
+      console.error(e);
+      reply({ error: '서버 오류가 발생했습니다' });
+    }
+  });
+
+  // 메시지 수정·삭제 공통: 같은 대화의 참여자에게 알림
+  async function emitToConversation(row, event, data) {
+    if (row.group_id) {
+      const { rows } = await pool.query('SELECT user_id FROM group_members WHERE group_id=$1', [row.group_id]);
+      for (const r of rows) io.to('user:' + r.user_id).emit(event, data);
+    } else {
+      io.to(['user:' + row.sender_id, 'user:' + row.recipient_id]).emit(event, data);
+    }
+  }
+
+  // 메시지 수정 (보낸 사람만, 암호화 여부는 그대로 유지)
+  socket.on('message:edit', async (payload, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    try {
+      const p = payload || {};
+      const id = Number(p.id);
+      const text = String(p.text || '');
+      if (!id || !text || text.length > 20000) return reply({ error: '수정할 내용을 입력하세요' });
+      const { rows } = await pool.query(
+        'UPDATE messages SET text=$3, edited_at=now() WHERE id=$1 AND sender_id=$2 AND deleted=false AND enc=$4 ' +
+        'RETURNING id, sender_id, recipient_id, group_id, text, enc, edited_at',
+        [id, me, text, !!p.enc]
+      );
+      if (!rows[0]) return reply({ error: '수정할 수 없는 메시지입니다' });
+      await emitToConversation(rows[0], 'message:updated', rows[0]);
+      reply({ ok: true });
+    } catch (e) {
+      console.error(e);
+      reply({ error: '서버 오류가 발생했습니다' });
+    }
+  });
+
+  // 메시지 삭제 (보낸 사람만): 내용과 첨부를 지우고 "삭제된 메시지"로 표시
+  socket.on('message:delete', async (payload, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    try {
+      const id = Number((payload || {}).id);
+      if (!id) return reply({ error: '잘못된 요청입니다' });
+      const { rows } = await pool.query(
+        "UPDATE messages SET deleted=true, text='', file_id=NULL, edited_at=NULL WHERE id=$1 AND sender_id=$2 AND deleted=false " +
+        'RETURNING id, sender_id, recipient_id, group_id',
+        [id, me]
+      );
+      if (!rows[0]) return reply({ error: '삭제할 수 없는 메시지입니다' });
+      await emitToConversation(rows[0], 'message:deleted', { id, group_id: rows[0].group_id, recipient_id: rows[0].recipient_id, sender_id: rows[0].sender_id });
       reply({ ok: true });
     } catch (e) {
       console.error(e);

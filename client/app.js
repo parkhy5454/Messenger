@@ -599,6 +599,119 @@ $('#gr-form').onsubmit = async (e) => {
   }
 };
 
+// ---------- 메시지 메뉴 / 답장 / 수정 / 삭제 / 전달 ----------
+let replyTo = null, editing = null;
+
+function quoteEl(m) {
+  const p = chatMsgs.find((x) => x.id === m.reply_to);
+  const d = document.createElement('div');
+  d.className = 'quote';
+  d.textContent = !p ? '원본 메시지' : p.deleted ? '삭제된 메시지입니다' : p.kind === 'image' ? '사진' : p.kind === 'file' ? '파일' : (p.text || '');
+  return d;
+}
+
+function openMsgMenu(m) {
+  if (m.deleted) return;
+  const mine = m.sender_id === me.id;
+  const items = [['답장', () => setReply(m)], ['전달', () => forwardMsg(m)]];
+  if (mine && !m.file_id) items.push(['수정', () => setEdit(m)]);
+  if (mine) items.push(['삭제', () => deleteMsg(m)]);
+  const box = $('#msg-menu-box');
+  box.innerHTML = '';
+  for (const item of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost wide-btn';
+    b.textContent = item[0];
+    b.onclick = () => { closeMsgMenu(); item[1](); };
+    box.appendChild(b);
+  }
+  $('#msg-menu').hidden = false;
+}
+function closeMsgMenu() { $('#msg-menu').hidden = true; }
+$('#msg-menu').onclick = (e) => { if (e.target.id === 'msg-menu') closeMsgMenu(); };
+$('#msg-menu-cancel').onclick = closeMsgMenu;
+
+function showComposeBar(text) {
+  $('#compose-bar-text').textContent = text;
+  $('#compose-bar').hidden = false;
+}
+function clearCompose() {
+  replyTo = null;
+  editing = null;
+  $('#compose-bar').hidden = true;
+}
+$('#compose-bar-x').onclick = () => { if (editing) $('#msg-input').value = ''; clearCompose(); };
+
+function setReply(m) {
+  editing = null;
+  replyTo = m;
+  const preview = m.kind === 'image' ? '사진' : m.kind === 'file' ? '파일' : (m.text || '');
+  showComposeBar('답장: ' + preview.slice(0, 40));
+  $('#msg-input').focus();
+}
+function setEdit(m) {
+  replyTo = null;
+  editing = m;
+  $('#msg-input').value = m.text || '';
+  showComposeBar('메시지 수정 중');
+  $('#msg-input').focus();
+}
+
+// 수정: 암호화 메시지는 같은 키로 다시 암호화해서 보냅니다
+async function submitEdit(m, text) {
+  try {
+    let body = text;
+    if (m.enc) {
+      const k = await keyForMsg(m);
+      const f = m.file_id ? { name: m.file_name, mime: m.file_mime, iv: m.file_iv } : null;
+      body = await E2EE.seal(k, { t: text, f });
+    }
+    socket.emit('message:edit', { id: m.id, text: body, enc: !!m.enc }, (res) => {
+      if (res && res.error) alert(res.error);
+    });
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function deleteMsg(m) {
+  if (!confirm('이 메시지를 삭제할까요? 상대방 화면에서도 지워집니다.')) return;
+  socket.emit('message:delete', { id: m.id }, (res) => {
+    if (res && res.error) alert(res.error);
+  });
+}
+
+// 전달: 텍스트 메시지만 (파일은 제외). 대화 목록에 있는 친구 아이디나 그룹 이름으로 찾습니다
+async function forwardMsg(m) {
+  if (m.file_id) return alert('파일은 전달할 수 없습니다. 텍스트 메시지만 전달할 수 있습니다.');
+  const q = (prompt('전달할 친구 아이디 또는 그룹 이름을 입력하세요') || '').trim();
+  if (!q) return;
+  const target = chats.find((c) => (c.type === 'group' ? c.name === q : c.username === q.toLowerCase()));
+  if (!target) return alert('대화 목록에서 찾을 수 없습니다. 친구나 그룹 대화가 있어야 전달할 수 있습니다.');
+  const prev = current;
+  current = target;
+  try {
+    await sendPayload({ text: m.text || '' });
+  } finally {
+    current = prev;
+  }
+}
+
+// 수정·삭제 알림 수신: 열려 있는 대화만 갱신
+async function onUpdated(u) {
+  const old = chatMsgs.find((x) => x.id === u.id);
+  if (!old) return;
+  Object.assign(old, await decryptMsg({ ...old, text: u.text, enc: u.enc, edited_at: u.edited_at }));
+  renderChat('keep');
+}
+function onDeleted(d) {
+  const old = chatMsgs.find((x) => x.id === d.id);
+  if (!old) return;
+  Object.assign(old, { deleted: true, text: '', file_id: null });
+  renderChat('keep');
+}
+
 // ---------- 시작 / 소켓 ----------
 async function start() {
   try {
@@ -639,6 +752,8 @@ function connectSocket() {
   socket.on('message:new', onMessage);
   socket.on('read:dm', onRead);
   socket.on('device:request', (r) => approveDevice(r).catch((err) => alert(err.message)));
+  socket.on('message:updated', onUpdated);
+  socket.on('message:deleted', onDeleted);
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') logout();
   });
@@ -797,6 +912,7 @@ function isCurrent(t) {
 }
 
 async function openChat(t) {
+  clearCompose();
   current = t;
   oldestId = null;
   chatMsgs = [];
@@ -899,6 +1015,7 @@ function makeMsg(m, cont) {
 
   const bubble = document.createElement('div');
   bubble.className = 'msg ' + (mine ? 'me' : 'them');
+  bubble.onclick = () => openMsgMenu(m);
   if (m.kind === 'image' && m.file_id) {
     const img = document.createElement('img');
     img.className = 'thumb';
@@ -921,11 +1038,20 @@ function makeMsg(m, cont) {
     };
     bubble.appendChild(a);
   }
-  if (m.text) {
+  if (m.deleted) {
     const t = document.createElement('div');
-    t.textContent = m.text;
+    t.className = 'muted';
+    t.textContent = '삭제된 메시지입니다';
     bubble.appendChild(t);
+  } else {
+    if (m.reply_to) bubble.prepend(quoteEl(m));
+    if (m.text) {
+      const t = document.createElement('div');
+      t.textContent = m.text;
+      bubble.appendChild(t);
+    }
   }
+
 
   // 메타: 1:1에서 내 메시지는 "1"(안 읽음) 표시, 시간
   const meta = document.createElement('div');
@@ -937,7 +1063,7 @@ function makeMsg(m, cont) {
     meta.appendChild(r);
   }
   const tm = document.createElement('span');
-  tm.textContent = timeLabel(m.created_at);
+  tm.textContent = (m.edited_at ? '수정됨 · ' : '') + timeLabel(m.created_at);
   meta.appendChild(tm);
 
   if (mine) line.append(meta, bubble);
@@ -957,9 +1083,9 @@ function emitSend(payload) {
 async function sendPayload(extra) {
   try {
     const sk = extra.sk || await sendKey();
-    if (!sk) return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null });
+    if (!sk) return emitSend({ groupId: current.id, text: extra.text || '', fileId: extra.fileId || null, replyTo: extra.replyTo || null });
     const body = await E2EE.seal(sk.key, { t: extra.text || '', f: extra.fileMeta || null });
-    const payload = { text: body, fileId: extra.fileId || null, enc: true };
+    const payload = { text: body, fileId: extra.fileId || null, enc: true, replyTo: extra.replyTo || null };
     if (current.type === 'group') Object.assign(payload, { groupId: current.id, epoch: sk.epoch });
     else payload.to = current.id;
     emitSend(payload);
@@ -972,8 +1098,10 @@ $('#compose').onsubmit = (e) => {
   e.preventDefault();
   const text = $('#msg-input').value.trim();
   if (!text || !current) return;
-  sendPayload({ text });
+  if (editing) submitEdit(editing, text);
+  else sendPayload({ text, replyTo: replyTo ? replyTo.id : null });
   $('#msg-input').value = '';
+  clearCompose();
 };
 
 // 파일 보내기 (2MB 이하, 이미지 / PDF / 텍스트). 1:1은 파일도 암호화해서 올립니다.
@@ -1004,7 +1132,8 @@ $('#attach').onchange = async (e) => {
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || '파일 업로드에 실패했습니다');
     const text = $('#msg-input').value.trim();
-    await sendPayload({ fileId: j.id, text, fileMeta, sk });
+    await sendPayload({ fileId: j.id, text, fileMeta, sk, replyTo: replyTo ? replyTo.id : null });
+    clearCompose();
     $('#msg-input').value = '';
   } catch (err) {
     alert(err.message);

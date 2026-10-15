@@ -219,12 +219,15 @@
       </header>
       <button id="more" class="link" type="button" hidden>이전 메시지 더 보기</button>
       <div id="chat-box" class="box"></div>
+      <div id="compose-bar" hidden><span id="compose-bar-text"></span><button id="compose-bar-x" class="ghost" type="button">×</button></div>
       <form id="compose" hidden>
         <label class="attach" title="파일 보내기">📎<input id="attach" type="file" accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" hidden /></label>
         <input id="msg-input" placeholder="메시지 입력" maxlength="2000" autocomplete="off" />
         <button type="submit" class="primary">보내기</button>
       </form>
     </section>
+
+    <div id="msg-menu" hidden><div id="msg-menu-sheet"><div id="msg-menu-box"></div><button id="msg-menu-cancel" class="ghost wide-btn" type="button">취소</button></div></div>
 
     <!-- 하단 탭바 -->
     <nav id="tabbar">

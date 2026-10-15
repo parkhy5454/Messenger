@@ -132,3 +132,8 @@ CREATE TABLE IF NOT EXISTS device_requests (
   status TEXT NOT NULL DEFAULT 'pending',
   expires_at TIMESTAMPTZ NOT NULL
 );
+
+-- 메시지 답장·수정·삭제
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to INT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT false;
