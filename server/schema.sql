@@ -315,3 +315,15 @@ CREATE TABLE IF NOT EXISTS status_samples (
   latency_ms INT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS status_samples_ts ON status_samples (ts);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_discoverable BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS users_phone_hash ON users (phone_hash);
+CREATE TABLE IF NOT EXISTS phone_codes (
+  user_id INT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  phone_hash TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts INT NOT NULL DEFAULT 0
+);

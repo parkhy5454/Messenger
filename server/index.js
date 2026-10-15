@@ -1404,6 +1404,115 @@ app.post('/api/friends/find-email', auth, limit({ windowMs: 60 * 60 * 1000, max:
   res.json({ username: rows[0].username, name: rows[0].name });
 }));
 
+// ---- 전화번호 인증 · 번호로 친구 찾기 ----
+// 켜는 조건: PHONE_VERIFY=on 이고 SMS_API_URL 이 설정된 경우 (SMS_API_KEY, SMS_FROM 함께 사용).
+// 번호 원본은 저장하지 않고 HMAC 해시만 저장합니다. 해시 키는 서버 비밀에서 만듭니다.
+// 테스트용: PHONE_DEV_ECHO=1 이고 NODE_ENV 가 production 이 아닐 때만 인증번호를 응답에 넣습니다.
+const PHONE_KEY = require('crypto').createHash('sha256').update('phone-hash:' + JWT_SECRET).digest();
+const SMS_URL = process.env.SMS_API_URL || '';
+const SMS_KEY = process.env.SMS_API_KEY || '';
+const SMS_FROM = process.env.SMS_FROM || '';
+const DEV_ECHO = process.env.PHONE_DEV_ECHO === '1' && process.env.NODE_ENV !== 'production';
+const PHONE_ENABLED = process.env.PHONE_VERIFY === 'on' && (!!SMS_URL || DEV_ECHO);
+const phoneHash = (normalized) => require('crypto').createHmac('sha256', PHONE_KEY).update(normalized).digest('hex');
+// 한국 휴대폰 번호만 받음: 01X-XXXX-XXXX, +82 10..., 8210... → 82XXXXXXXXXX
+function normalizePhone(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.startsWith('82')) d = d.slice(2);
+  if (d.startsWith('0')) d = d.slice(1);
+  if (!/^1[0-9]{8,9}$/.test(d) || !/^1[016-9]/.test(d)) return null;
+  return '82' + d;
+}
+async function sendSms(to, text) {
+  if (!SMS_URL) throw new Error('SMS 발송 설정이 없습니다');
+  const r = await fetch(SMS_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + SMS_KEY },
+    body: JSON.stringify({ to: '0' + to.slice(2), from: SMS_FROM, text }),
+  });
+  if (!r.ok) throw new Error('SMS 발송 실패 (' + r.status + ')');
+}
+const phoneOff = (res) => res.status(503).json({ error: '전화번호 인증은 아직 준비 중입니다' });
+
+app.get('/api/phone/status', auth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT phone_verified, phone_discoverable FROM users WHERE id=$1', [req.user.id]);
+  res.json({
+    enabled: PHONE_ENABLED,
+    verified: !!(rows[0] && rows[0].phone_verified),
+    discoverable: !!(rows[0] && rows[0].phone_discoverable),
+  });
+}));
+
+app.post('/api/phone/request', auth, limit({ windowMs: 60 * 60 * 1000, max: 5, key: (req) => 'phonereq:' + req.user.id }), wrap(async (req, res) => {
+  if (!PHONE_ENABLED) return phoneOff(res);
+  const phone = normalizePhone((req.body || {}).phone);
+  if (!phone) return res.status(400).json({ error: '휴대폰 번호를 확인하세요 (010으로 시작)' });
+  const h = phoneHash(phone);
+  const taken = await pool.query('SELECT 1 FROM users WHERE phone_hash=$1 AND id<>$2', [h, req.user.id]);
+  if (taken.rows[0]) return res.status(409).json({ error: '이미 다른 계정에 등록된 번호입니다' });
+  const code = String(require('crypto').randomInt(0, 1000000)).padStart(6, '0');
+  try {
+    if (!DEV_ECHO) await sendSms(phone, '[메신저] 인증번호 ' + code + ' (5분 안에 입력하세요)');
+  } catch (e) {
+    console.error('SMS 실패:', e.message);
+    return res.status(502).json({ error: '인증번호를 보내지 못했습니다. 잠시 후 다시 시도하세요' });
+  }
+  await pool.query(
+    `INSERT INTO phone_codes (user_id, phone_hash, code_hash, expires_at, attempts) VALUES ($1,$2,$3, now() + interval '5 minutes', 0)
+     ON CONFLICT (user_id) DO UPDATE SET phone_hash=EXCLUDED.phone_hash, code_hash=EXCLUDED.code_hash, expires_at=EXCLUDED.expires_at, attempts=0`,
+    [req.user.id, h, phoneHash('code:' + req.user.id + ':' + code)]);
+  res.json(DEV_ECHO ? { ok: true, devCode: code } : { ok: true });
+}));
+
+app.post('/api/phone/verify', auth, limit({ windowMs: 10 * 60 * 1000, max: 20, key: (req) => 'phoneverify:' + req.user.id }), wrap(async (req, res) => {
+  if (!PHONE_ENABLED) return phoneOff(res);
+  const code = String((req.body || {}).code || '');
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: '인증번호 6자리를 입력하세요' });
+  const { rows } = await pool.query('SELECT * FROM phone_codes WHERE user_id=$1', [req.user.id]);
+  const c = rows[0];
+  if (!c || new Date(c.expires_at) < new Date()) return res.status(400).json({ error: '인증번호가 만료되었습니다. 다시 받으세요' });
+  if (c.attempts >= 5) return res.status(429).json({ error: '입력 횟수를 넘었습니다. 다시 받으세요' });
+  if (c.code_hash !== phoneHash('code:' + req.user.id + ':' + code)) {
+    await pool.query('UPDATE phone_codes SET attempts = attempts + 1 WHERE user_id=$1', [req.user.id]);
+    return res.status(400).json({ error: '인증번호가 올바르지 않습니다' });
+  }
+  const taken = await pool.query('SELECT 1 FROM users WHERE phone_hash=$1 AND id<>$2', [c.phone_hash, req.user.id]);
+  if (taken.rows[0]) return res.status(409).json({ error: '이미 다른 계정에 등록된 번호입니다' });
+  await pool.query('UPDATE users SET phone_hash=$2, phone_verified=true WHERE id=$1', [req.user.id, c.phone_hash]);
+  await pool.query('DELETE FROM phone_codes WHERE user_id=$1', [req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.delete('/api/phone', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE users SET phone_hash=NULL, phone_verified=false, phone_discoverable=false WHERE id=$1', [req.user.id]);
+  res.json({ ok: true });
+}));
+
+app.put('/api/prefs/phone-discoverable', auth, wrap(async (req, res) => {
+  const on = !!(req.body || {}).on;
+  const { rows } = await pool.query('SELECT phone_verified FROM users WHERE id=$1', [req.user.id]);
+  if (on && !(rows[0] && rows[0].phone_verified)) return res.status(400).json({ error: '먼저 전화번호를 인증하세요' });
+  await pool.query('UPDATE users SET phone_discoverable=$2 WHERE id=$1', [req.user.id, on]);
+  res.json({ ok: true, discoverable: on });
+}));
+
+// 연락처 번호 목록에서 가입자 찾기. 번호 원본은 저장하지 않고 해시로만 비교합니다.
+// 찾는 사람도 인증된 사람만 가능, 상대는 '번호로 찾기 허용'을 켠 사람만 결과에 나옴.
+app.post('/api/friends/find-phones', auth, limit({ windowMs: 60 * 60 * 1000, max: 10, key: (req) => 'findphone:' + req.user.id }), wrap(async (req, res) => {
+  if (!PHONE_ENABLED) return phoneOff(res);
+  const me = (await pool.query('SELECT phone_verified FROM users WHERE id=$1', [req.user.id])).rows[0];
+  if (!me || !me.phone_verified) return res.status(403).json({ error: '먼저 전화번호를 인증하세요' });
+  const list = Array.isArray((req.body || {}).phones) ? req.body.phones.slice(0, 500) : [];
+  const hashes = [...new Set(list.map(normalizePhone).filter(Boolean).map(phoneHash))];
+  if (!hashes.length) return res.json([]);
+  const { rows } = await pool.query(
+    `SELECT u.username, u.name FROM users u
+     WHERE u.phone_hash = ANY($1) AND u.phone_discoverable AND u.phone_verified AND u.id<>$2
+       AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=$2))`,
+    [hashes, req.user.id]);
+  res.json(rows);
+}));
+
 // requester → me 요청을 수락: 양쪽 모두 accepted 로 만든다
 async function acceptFriend(requesterId, myId) {
   await pool.query(

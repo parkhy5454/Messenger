@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall', 'addfriend', 'kakaoimport', 'kakaoview'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall', 'addfriend', 'kakaoimport', 'kakaoview', 'phonefriend'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -1304,6 +1304,130 @@ $('#kkv-search').oninput = () => { kkShown = 300; renderKkView(); };
 $('#kkv-more').onclick = () => { kkShown += 300; renderKkView(); };
 $('#kkv-photos-btn').onclick = () => toggleKkGallery();
 $('#kkv-gallery-more').onclick = () => showMoreKkPhotos();
+
+// ===== 전화번호로 친구 찾기 (번호는 해시로만 저장, 인증·찾기 허용한 사람만 노출) =====
+function pfMsg(t) { $('#pf-msg').textContent = t; }
+async function loadPhoneStatus() {
+  const st = await api('/api/phone/status');
+  const on = !!st.enabled;
+  $('#pf-off').hidden = on;
+  $('#pf-body').hidden = !on;
+  if (!on) return;
+  $('#pf-status').textContent = st.verified ? '인증된 번호로 연결되어 있습니다.' : '아직 인증하지 않았습니다.';
+  $('#pf-req-form').hidden = !!st.verified;
+  $('#pf-verify-form').hidden = true;
+  $('#pf-unlink').hidden = !st.verified;
+  $('#pf-disc').checked = !!st.discoverable;
+  $('#pf-disc').disabled = !st.verified;
+  $('#pf-contacts').hidden = !(st.verified && 'contacts' in navigator && 'ContactsManager' in window);
+}
+async function openPhoneFriend() {
+  pfMsg('');
+  $('#pf-results').innerHTML = '';
+  showView('phonefriend');
+  try {
+    await loadPhoneStatus();
+  } catch (e) {
+    pfMsg(e.message);
+  }
+}
+function renderPhoneResults(list) {
+  const ul = $('#pf-results');
+  ul.innerHTML = '';
+  if (!list.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = '찾은 친구가 없습니다';
+    ul.appendChild(li);
+    return;
+  }
+  for (const r of list) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = r.name + ' (@' + r.username + ')';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary small-btn';
+    btn.textContent = '친구 요청';
+    btn.onclick = async () => {
+      try {
+        await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: r.username }) });
+        pfMsg(r.name + '님에게 친구 요청을 보냈습니다.');
+      } catch (e) {
+        pfMsg(e.message);
+      }
+    };
+    li.append(name, btn);
+    ul.appendChild(li);
+  }
+}
+async function findByPhones(phones) {
+  pfMsg('찾는 중...');
+  try {
+    const list = await api('/api/friends/find-phones', { method: 'POST', body: JSON.stringify({ phones }) });
+    renderPhoneResults(list);
+    pfMsg(list.length ? list.length + '명을 찾았습니다.' : '');
+  } catch (e) {
+    pfMsg(e.message);
+  }
+}
+$('#btn-phonefriend').onclick = () => openPhoneFriend();
+$('#phonefriend-back').onclick = () => openMain('settings');
+$('#pf-req-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const r = await api('/api/phone/request', { method: 'POST', body: JSON.stringify({ phone: $('#pf-phone').value }) });
+    $('#pf-verify-form').hidden = false;
+    pfMsg(r.devCode ? '테스트 인증번호: ' + r.devCode : '인증번호를 보냈습니다. 5분 안에 입력하세요.');
+  } catch (err) {
+    pfMsg(err.message);
+  }
+};
+$('#pf-verify-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/api/phone/verify', { method: 'POST', body: JSON.stringify({ code: $('#pf-code').value.trim() }) });
+    $('#pf-code').value = '';
+    pfMsg('인증되었습니다.');
+    await loadPhoneStatus();
+  } catch (err) {
+    pfMsg(err.message);
+  }
+};
+$('#pf-unlink').onclick = async () => {
+  if (!confirm('전화번호 연결을 해제할까요? 번호로 찾기도 함께 꺼집니다.')) return;
+  try {
+    await api('/api/phone', { method: 'DELETE' });
+    pfMsg('연결을 해제했습니다.');
+    await loadPhoneStatus();
+  } catch (err) {
+    pfMsg(err.message);
+  }
+};
+$('#pf-disc').onchange = async () => {
+  const on = $('#pf-disc').checked;
+  try {
+    await api('/api/prefs/phone-discoverable', { method: 'PUT', body: JSON.stringify({ on }) });
+    pfMsg(on ? '이제 내 번호로 나를 찾을 수 있습니다.' : '번호로 찾기를 껐습니다.');
+  } catch (err) {
+    $('#pf-disc').checked = !on;
+    pfMsg(err.message);
+  }
+};
+$('#pf-contacts').onclick = async () => {
+  try {
+    const picked = await navigator.contacts.select(['tel'], { multiple: true });
+    await findByPhones(picked.flatMap((c) => c.tel || []));
+  } catch (err) {
+    pfMsg('연락처를 가져오지 못했습니다.');
+  }
+};
+$('#pf-find-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const v = $('#pf-find-phone').value.trim();
+  if (!v) return;
+  await findByPhones([v]);
+};
 
 // 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
 async function handleFriendLink() {
