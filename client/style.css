@@ -69,3 +69,28 @@ button.link { background:none; border:none; color:var(--primary, #2f6fed); font-
 #more { margin:4px auto; }
 .card.wide { width:calc(100% - 32px); max-width:640px; }
 .admin h2 { font-size:16px; margin:16px 0 4px; }
+
+/* ---- 하단 탭 레이아웃 ---- */
+#view-main { position:fixed; top:0; bottom:0; left:0; right:0; margin:0 auto; max-width:720px; background:#f5f6fa; overflow:hidden; }
+#view-main .pane { position:absolute; top:0; bottom:62px; left:0; right:0; overflow:auto; padding:14px; box-sizing:border-box; background:#fff; }
+#view-main .pane-head { display:block; font-size:18px; margin:4px 0 10px; }
+#tabbar { position:absolute; left:0; right:0; bottom:0; height:62px; display:flex; background:#fff; border-top:1px solid var(--line); box-sizing:border-box; }
+#tabbar button { flex:1; border:none; background:none; font-size:12px; color:#8a8f98; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; position:relative; }
+#tabbar button.on { color:#2f6fed; font-weight:600; }
+#tabbar .tab-ic { font-size:20px; line-height:1; }
+#tabbar #chat-badge { position:absolute; top:6px; left:calc(50% + 6px); margin:0; }
+#view-main.chat-open #tabbar, #view-main.chat-open .pane { display:none; }
+#chat-view { display:none; position:absolute; top:0; bottom:0; left:0; right:0; background:#fff; flex-direction:column; }
+#view-main.chat-open #chat-view { display:flex; }
+#chat-view > header { display:flex; align-items:center; gap:8px; padding:10px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+#chat-view > header > strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#chat-back { font-size:26px; line-height:1; background:none; border:none; padding:0 6px; cursor:pointer; }
+#chat-view #chat-box { flex:1; overflow:auto; min-height:0; }
+#chat-view #compose { display:flex; gap:6px; padding:8px; border-top:1px solid var(--line); align-items:center; }
+#chat-view #compose #msg-input { flex:1; min-width:0; }
+.me-card { padding:14px; border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }
+.me-card p { margin:4px 0 0; font-size:14px; }
+.setting-list { list-style:none; padding:0; margin:0; }
+.setting-list li { margin-bottom:8px; }
+.wide-btn { width:100%; text-align:left; padding:12px; }
+#view-main .friends li { cursor:pointer; }

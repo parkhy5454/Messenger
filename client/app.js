@@ -18,6 +18,39 @@ function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
 
+// 하단 탭 (친구 / 대화 / 설정)
+let activeTab = 'friends';
+function showTab(name) {
+  activeTab = name;
+  for (const t of ['friends', 'chats', 'settings']) $('#tab-' + t).hidden = t !== name;
+  document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+}
+function openMain(tab) {
+  showView('main');
+  showTab(tab || activeTab);
+}
+function setChatOpen(open) {
+  $('#view-main').classList.toggle('chat-open', open);
+}
+function renderMe() {
+  $('#me').textContent = me.name + ' (@' + me.username + ')';
+  $('#me-status').textContent = me.status_msg || '상태 메시지가 없습니다';
+}
+
+document.querySelectorAll('#tabbar button').forEach((b) => {
+  b.onclick = () => {
+    setChatOpen(false);
+    current = null;
+    showTab(b.dataset.tab);
+    if (b.dataset.tab === 'chats') renderList();
+  };
+});
+$('#chat-back').onclick = () => {
+  current = null;
+  setChatOpen(false);
+  renderList();
+};
+
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -150,7 +183,7 @@ $('#btn-pw').onclick = () => {
   $('#pw-msg').textContent = '';
   showView('pw');
 };
-$('#pw-back').onclick = () => showView('main');
+$('#pw-back').onclick = () => openMain('settings');
 $('#pw-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
@@ -173,7 +206,7 @@ $('#btn-profile').onclick = () => {
   $('#pf-msg').textContent = '';
   showView('profile');
 };
-$('#profile-back').onclick = () => showView('main');
+$('#profile-back').onclick = () => openMain('settings');
 $('#profile-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
@@ -182,7 +215,7 @@ $('#profile-form').onsubmit = async (e) => {
       body: JSON.stringify({ name: $('#pf-name').value.trim(), statusMsg: $('#pf-status').value.trim() }),
     });
     me = await api('/api/me');
-    $('#me').textContent = me.name + ' (@' + me.username + ')';
+    renderMe();
     $('#pf-msg').textContent = '저장되었습니다.';
   } catch (err) {
     $('#pf-msg').textContent = err.message;
@@ -190,7 +223,7 @@ $('#profile-form').onsubmit = async (e) => {
 };
 
 $('#btn-blocks').onclick = loadBlocks;
-$('#blocks-back').onclick = () => showView('main');
+$('#blocks-back').onclick = () => openMain('settings');
 async function loadBlocks() {
   showView('blocks');
   const list = await api('/api/blocks');
@@ -210,7 +243,7 @@ async function loadBlocks() {
 }
 
 $('#btn-admin').onclick = loadAdmin;
-$('#admin-back').onclick = () => showView('main');
+$('#admin-back').onclick = () => openMain('settings');
 async function loadAdmin() {
   showView('admin');
   const [reports, users] = await Promise.all([api('/api/admin/reports'), api('/api/admin/users')]);
@@ -262,7 +295,7 @@ $('#btn-newgroup').onclick = () => {
   }
   showView('group');
 };
-$('#gr-back').onclick = () => showView('main');
+$('#gr-back').onclick = () => openMain('friends');
 $('#gr-form').onsubmit = async (e) => {
   e.preventDefault();
   const ids = [...document.querySelectorAll('#gr-friends input:checked')].map((c) => Number(c.value));
@@ -271,7 +304,7 @@ $('#gr-form').onsubmit = async (e) => {
       method: 'POST',
       body: JSON.stringify({ name: $('#gr-name').value.trim(), memberIds: ids }),
     });
-    showView('main');
+    openMain('chats');
     await loadList();
   } catch (err) {
     $('#gr-msg').textContent = err.message;
@@ -286,8 +319,8 @@ async function start() {
     if (err.message.includes('제한')) alert(err.message);
     return logout();
   }
-  showView('main');
-  $('#me').textContent = me.name + ' (@' + me.username + ')';
+  openMain('friends');
+  renderMe();
   $('#btn-admin').hidden = !me.is_admin;
   await loadRequests();
   await loadList();
@@ -307,6 +340,7 @@ function connectSocket() {
 
 async function loadList() {
   [friends, groups] = await Promise.all([api('/api/friends'), api('/api/groups')]);
+  renderFriends();
   renderList();
 }
 
@@ -317,6 +351,19 @@ async function loadUnread() {
   renderList();
 }
 
+// 친구 탭: 친구 목록
+function renderFriends() {
+  const q = $('#fsearch').value.trim().toLowerCase();
+  const ul = $('#friends');
+  ul.innerHTML = '';
+  for (const f of friends) {
+    if (q && !(f.name + f.username).toLowerCase().includes(q)) continue;
+    ul.appendChild(listItem({ type: 'dm', id: f.id, name: f.name, username: f.username }, 0));
+  }
+  if (!ul.children.length) ul.innerHTML = '<li class="muted">친구가 없습니다. 위에서 아이디로 친구를 추가하세요.</li>';
+}
+
+// 대화 탭: 그룹 + 친구 대화 (안 읽은 메시지가 많은 순)
 function renderList() {
   const q = $('#search').value.trim().toLowerCase();
   const ul = $('#list');
@@ -327,10 +374,19 @@ function renderList() {
     const t = { type: 'group', id: g.id, name: g.name, count: g.members ? g.members.length : 0 };
     ul.appendChild(listItem(t, 0));
   }
-  for (const f of friends) {
-    if (!match(f.name + f.username)) continue;
+  const dms = friends
+    .filter((f) => match(f.name + f.username))
+    .sort((a, b) => (unread[b.id] || 0) - (unread[a.id] || 0));
+  for (const f of dms) {
     ul.appendChild(listItem({ type: 'dm', id: f.id, name: f.name, username: f.username }, unread[f.id] || 0));
   }
+  if (!ul.children.length) ul.innerHTML = '<li class="muted">대화가 없습니다. 친구 탭에서 친구를 추가하세요.</li>';
+
+  // 하단 탭의 "대화" 뱃지: 안 읽은 메시지 총합
+  const total = Object.values(unread).reduce((a, b) => a + b, 0);
+  const badge = $('#chat-badge');
+  badge.hidden = !total;
+  badge.textContent = total > 99 ? '99+' : String(total);
 }
 
 function listItem(t, badge) {
@@ -350,6 +406,7 @@ function listItem(t, badge) {
 }
 
 $('#search').oninput = renderList;
+$('#fsearch').oninput = renderFriends;
 
 // 받은 친구 요청 (수락 / 거절)
 async function loadRequests() {
@@ -393,6 +450,7 @@ function isCurrent(t) {
 async function openChat(t) {
   current = t;
   oldestId = null;
+  setChatOpen(true);
   $('#chat-title').textContent = t.type === 'group' ? '👥 ' + t.name : t.name + '  @' + t.username;
   $('#dm-actions').hidden = t.type !== 'dm';
   $('#group-actions').hidden = t.type !== 'group';
@@ -608,6 +666,7 @@ $('#btn-gleave').onclick = async () => {
   try {
     await api('/api/groups/' + current.id + '/leave', { method: 'POST' });
     current = null;
+    setChatOpen(false);
     $('#chat-box').innerHTML = '';
     $('#chat-title').textContent = '대화를 선택하세요';
     $('#group-actions').hidden = true;

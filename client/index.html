@@ -136,34 +136,51 @@
     </div>
   </section>
 
-  <!-- 메인: 목록 + 채팅 -->
+  <!-- 메인: 하단 탭 (친구 / 대화 / 설정) + 채팅 화면 -->
   <section id="view-main" class="view main" hidden>
-    <aside class="side">
-      <header>
-        <strong id="me"></strong>
-        <button id="logout" class="ghost" type="button">로그아웃</button>
-      </header>
-      <nav class="menu">
-        <button id="btn-profile" class="ghost" type="button">프로필</button>
-        <button id="btn-newgroup" class="ghost" type="button">그룹 만들기</button>
-        <button id="btn-blocks" class="ghost" type="button">차단 목록</button>
-        <button id="btn-pw" class="ghost" type="button">비번변경</button>
-        <button id="btn-admin" class="ghost" type="button" hidden>관리자</button>
-      </nav>
+    <!-- 친구 탭 -->
+    <div id="tab-friends" class="pane">
+      <header class="pane-head"><strong>친구</strong></header>
       <form id="add-form" class="add">
         <input id="add-input" placeholder="친구 아이디 추가" required />
         <button type="submit">추가</button>
       </form>
-      <input id="search" class="search" placeholder="이름·그룹 검색" />
+      <input id="fsearch" class="search" placeholder="친구 검색" />
       <div id="req-box" hidden>
         <p class="muted req-title">받은 친구 요청</p>
         <ul id="requests" class="friends"></ul>
       </div>
-      <ul id="list" class="friends"></ul>
-    </aside>
+      <button id="btn-newgroup" class="ghost wide-btn" type="button">+ 그룹 만들기</button>
+      <ul id="friends" class="friends"></ul>
+    </div>
 
-    <main class="chat">
+    <!-- 대화 탭 -->
+    <div id="tab-chats" class="pane" hidden>
+      <header class="pane-head"><strong>대화</strong></header>
+      <input id="search" class="search" placeholder="대화 검색" />
+      <ul id="list" class="friends"></ul>
+    </div>
+
+    <!-- 설정 탭 -->
+    <div id="tab-settings" class="pane" hidden>
+      <header class="pane-head"><strong>설정</strong></header>
+      <div class="me-card">
+        <strong id="me"></strong>
+        <p id="me-status" class="muted"></p>
+      </div>
+      <ul class="setting-list">
+        <li><button id="btn-profile" class="ghost wide-btn" type="button">프로필 편집 (이름·상태 메시지)</button></li>
+        <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
+        <li><button id="btn-blocks" class="ghost wide-btn" type="button">차단 목록</button></li>
+        <li><button id="btn-admin" class="ghost wide-btn" type="button" hidden>관리자</button></li>
+        <li><button id="logout" class="ghost wide-btn" type="button">로그아웃</button></li>
+      </ul>
+    </div>
+
+    <!-- 채팅 화면 (대화 목록 위에 전체 화면으로 열림) -->
+    <section id="chat-view">
       <header>
+        <button id="chat-back" type="button" aria-label="뒤로">‹</button>
         <strong id="chat-title">대화를 선택하세요</strong>
         <div id="dm-actions" hidden>
           <button id="btn-block" class="ghost" type="button">차단</button>
@@ -181,7 +198,14 @@
         <input id="msg-input" placeholder="메시지 입력" maxlength="2000" autocomplete="off" />
         <button type="submit" class="primary">보내기</button>
       </form>
-    </main>
+    </section>
+
+    <!-- 하단 탭바 -->
+    <nav id="tabbar">
+      <button type="button" data-tab="friends" class="on"><span class="tab-ic">👤</span>친구</button>
+      <button type="button" data-tab="chats"><span class="tab-ic">💬</span>대화<b id="chat-badge" class="badge" hidden></b></button>
+      <button type="button" data-tab="settings"><span class="tab-ic">⚙️</span>설정</button>
+    </nav>
   </section>
 
   <script src="/socket.io/socket.io.js"></script>
