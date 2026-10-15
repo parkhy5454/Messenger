@@ -21,7 +21,7 @@ if (tokenMatch) {
 }
 
 // ---------- 공통 유틸 ----------
-const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall'];
+const VIEWS = ['auth', 'verify', 'main', 'reset', 'pw', 'profile', 'blocks', 'group', 'admin', 'unlock', 'security', 'scheduled', 'profiles', 'ai', 'bots', 'plan', 'quiet', 'gboard', 'exportall', 'addfriend'];
 function showView(name) {
   for (const v of VIEWS) $('#view-' + v).hidden = v !== name;
 }
@@ -892,6 +892,97 @@ async function joinPendingInvite() {
 
 // ---------- 보안 · 기기 관리 · 2단계 인증 ----------
 $('#btn-security').onclick = openSecurity;
+
+// ===== 친구 추가: 초대 링크 · QR · 이메일로 찾기 =====
+function renderShare(info) {
+  $('#af-url').value = info.url;
+  $('#af-qr').src = info.qr;
+  $('#af-qr').hidden = false;
+  $('#af-disc').checked = !!info.discoverable;
+}
+async function openAddFriend() {
+  $('#af-msg').textContent = '';
+  $('#af-result').textContent = '';
+  $('#af-result').innerHTML = '';
+  showView('addfriend');
+  try {
+    renderShare(await api('/api/friend-share'));
+  } catch (e) {
+    $('#af-msg').textContent = e.message;
+  }
+}
+$('#btn-addfriend').onclick = () => openAddFriend();
+$('#addfriend-back').onclick = () => openMain('settings');
+$('#af-copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('#af-url').value);
+    $('#af-msg').textContent = '링크를 복사했습니다.';
+  } catch (_) {
+    $('#af-url').select();
+    $('#af-msg').textContent = '링크를 길게 눌러 직접 복사하세요.';
+  }
+};
+$('#af-reset').onclick = async () => {
+  if (!confirm('새 링크를 만들면 지금 링크는 더 이상 쓸 수 없습니다. 계속할까요?')) return;
+  try {
+    renderShare(await api('/api/friend-share/reset', { method: 'POST' }));
+    $('#af-msg').textContent = '새 링크를 만들었습니다.';
+  } catch (e) {
+    $('#af-msg').textContent = e.message;
+  }
+};
+$('#af-disc').onchange = async () => {
+  const on = $('#af-disc').checked;
+  try {
+    await api('/api/prefs/discoverable', { method: 'PUT', body: JSON.stringify({ on }) });
+    $('#af-msg').textContent = on ? '이메일로 찾기를 켰습니다. 상대가 내 이메일로 나를 찾을 수 있습니다.' : '이메일로 찾기를 껐습니다.';
+  } catch (e) {
+    $('#af-disc').checked = !on;
+    $('#af-msg').textContent = e.message;
+  }
+};
+$('#af-find-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $('#af-email').value.trim();
+  const out = $('#af-result');
+  out.innerHTML = '';
+  if (!email) return;
+  try {
+    const r = await api('/api/friends/find-email', { method: 'POST', body: JSON.stringify({ email }) });
+    const text = document.createElement('span');
+    text.textContent = r.name + ' (@' + r.username + ') 님을 찾았습니다. ';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary small-btn';
+    btn.textContent = '친구 요청 보내기';
+    btn.onclick = async () => {
+      try {
+        await api('/api/friends', { method: 'POST', body: JSON.stringify({ username: r.username }) });
+        out.textContent = '친구 요청을 보냈습니다.';
+      } catch (err) {
+        out.textContent = err.message;
+      }
+    };
+    out.append(text, btn);
+  } catch (err) {
+    out.textContent = err.message;
+  }
+};
+
+// 초대 링크(?friend=토큰)로 들어온 경우 바로 친구가 된다. 로그인 후 한 번만 처리한다.
+async function handleFriendLink() {
+  const token = new URLSearchParams(location.search).get('friend');
+  if (!token) return;
+  history.replaceState(null, '', location.pathname);
+  try {
+    await api('/api/friends/by-link', { method: 'POST', body: JSON.stringify({ token }) });
+    alert('친구가 되었습니다.');
+    await loadList();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 $('#security-back').onclick = () => openMain('settings');
 async function openSecurity() {
   $('#security-msg').textContent = '';
@@ -1149,6 +1240,7 @@ async function enterMain() {
   refreshPlanState().catch(() => {});
   handleBillingReturn();
   loadMutes().catch(() => {});
+  handleFriendLink().catch(() => {});
   renderReceiptsBtn();
   renderVisBtns();
   await loadRequests();

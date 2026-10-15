@@ -122,6 +122,29 @@
   </div>
 
   <!-- 전체 데이터 내보내기 -->
+  <section id="view-addfriend" class="view" hidden>
+    <div class="card">
+      <h1>친구 추가</h1>
+      <h2>내 초대 링크</h2>
+      <p class="muted">이 링크나 QR 코드를 상대에게 보내면, 상대가 열었을 때 바로 친구가 됩니다. 새 링크를 만들면 이전 링크는 쓸 수 없습니다.</p>
+      <img id="af-qr" alt="초대 QR 코드" width="220" height="220" hidden />
+      <input id="af-url" type="text" readonly />
+      <div class="row-btns">
+        <button id="af-copy" class="primary" type="button">링크 복사</button>
+        <button id="af-reset" class="ghost" type="button">새 링크 만들기</button>
+      </div>
+      <h2>이메일로 찾기</h2>
+      <label><input id="af-disc" type="checkbox" /> 다른 사람이 내 이메일로 나를 찾을 수 있게 허용</label>
+      <form id="af-find-form">
+        <input id="af-email" type="email" placeholder="친구의 이메일" autocomplete="off" />
+        <button class="primary" type="submit">찾기</button>
+      </form>
+      <p id="af-result" class="msg-line"></p>
+      <p id="af-msg" class="msg-line"></p>
+      <button id="addfriend-back" class="link" type="button">돌아가기</button>
+    </div>
+  </section>
+
   <section id="view-exportall" class="view" hidden>
     <div class="card">
       <h1>전체 데이터 내보내기</h1>
@@ -388,6 +411,7 @@
         <li><button id="btn-pw" class="ghost wide-btn" type="button">비밀번호 변경</button></li>
         <li><button id="btn-sched-list" class="ghost wide-btn" type="button">예약 메시지 관리</button></li>
         <li><button id="btn-security" class="ghost wide-btn" type="button">보안 · 기기 관리</button></li>
+        <li><button id="btn-addfriend" class="ghost wide-btn" type="button">친구 추가 (링크 · QR · 이메일)</button></li>
         <li><button id="btn-blocks" class="ghost wide-btn" type="button">차단 목록</button></li>
         <li><button id="btn-avatar" class="ghost wide-btn" type="button">프로필 사진 바꾸기</button></li>
         <li><button id="btn-vis-photo" class="ghost wide-btn" type="button"></button></li>

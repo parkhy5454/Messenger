@@ -304,3 +304,7 @@ CREATE TABLE IF NOT EXISTS poll_votes (
   PRIMARY KEY (poll_id, user_id, option_idx)
 );
 CREATE INDEX IF NOT EXISTS polls_group ON polls (group_id, id);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS share_token TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discoverable BOOLEAN NOT NULL DEFAULT false;
+CREATE UNIQUE INDEX IF NOT EXISTS users_share_token ON users (share_token) WHERE share_token IS NOT NULL;

@@ -1259,6 +1259,69 @@ app.post('/api/friends', auth, wrap(async (req, res) => {
   res.status(201).json({ ok: true, status: 'pending' });
 }));
 
+// ---- 친구 추가: 개인 초대 링크 · QR · 이메일 검색 (공개 설정한 사람만) ----
+function shareUrl(req, token) {
+  const base = process.env.PUBLIC_URL || (req.protocol + '://' + req.get('host'));
+  return base.replace(/\/$/, '') + '/?friend=' + token;
+}
+async function shareInfo(req, uid) {
+  let { rows } = await pool.query('SELECT share_token, discoverable FROM users WHERE id=$1', [uid]);
+  let token = rows[0] && rows[0].share_token;
+  if (!token) {
+    token = require('crypto').randomBytes(12).toString('base64url');
+    await pool.query('UPDATE users SET share_token=$2 WHERE id=$1', [uid, token]);
+  }
+  const url = shareUrl(req, token);
+  const qr = await require('qrcode').toDataURL(url, { margin: 1, width: 220 });
+  return { url, qr, discoverable: !!(rows[0] && rows[0].discoverable) };
+}
+
+app.get('/api/friend-share', auth, wrap(async (req, res) => {
+  res.json(await shareInfo(req, req.user.id));
+}));
+app.post('/api/friend-share/reset', auth, wrap(async (req, res) => {
+  const token = require('crypto').randomBytes(12).toString('base64url');
+  await pool.query('UPDATE users SET share_token=$2 WHERE id=$1', [req.user.id, token]);
+  res.json(await shareInfo(req, req.user.id));
+}));
+
+// 초대 링크로 들어온 사람: 양쪽 모두 바로 친구가 된다 (링크를 열었다는 것 자체가 동의)
+app.post('/api/friends/by-link', auth, wrap(async (req, res) => {
+  const token = String((req.body || {}).token || '');
+  if (!token || token.length > 64) return res.status(400).json({ error: '유효하지 않은 링크입니다' });
+  const { rows } = await pool.query('SELECT id FROM users WHERE share_token=$1 AND email_verified', [token]);
+  const f = rows[0];
+  if (!f) return res.status(404).json({ error: '유효하지 않은 링크입니다' });
+  if (f.id === req.user.id) return res.status(400).json({ error: '내 링크입니다' });
+  if (await isBlocked(req.user.id, f.id)) return res.status(403).json({ error: '차단 관계라 추가할 수 없습니다' });
+  const existing = await pool.query(
+    'SELECT status FROM friendships WHERE user_id=$1 AND friend_id=$2', [req.user.id, f.id]);
+  if (existing.rows[0] && existing.rows[0].status === 'accepted') return res.status(409).json({ error: '이미 친구입니다' });
+  await pool.query(
+    `INSERT INTO friendships (user_id, friend_id, status) VALUES ($1,$2,'accepted'), ($2,$1,'accepted')
+     ON CONFLICT (user_id, friend_id) DO UPDATE SET status='accepted'`,
+    [req.user.id, f.id]);
+  res.status(201).json({ ok: true });
+}));
+
+app.put('/api/prefs/discoverable', auth, wrap(async (req, res) => {
+  await pool.query('UPDATE users SET discoverable=$2 WHERE id=$1', [req.user.id, !!(req.body || {}).on]);
+  res.json({ ok: true, discoverable: !!(req.body || {}).on });
+}));
+
+// 이메일로 찾기: 상대가 '이메일로 찾기 허용'을 켠 경우에만 결과를 준다. 없음/비공개는 같은 응답.
+app.post('/api/friends/find-email', auth, limit({ windowMs: 60 * 60 * 1000, max: 20, key: (req) => 'findemail:' + req.user.id }), wrap(async (req, res) => {
+  const email = String((req.body || {}).email || '').trim().toLowerCase();
+  if (!email || email.length > 200 || !email.includes('@')) return res.status(400).json({ error: '이메일을 확인하세요' });
+  const { rows } = await pool.query(
+    `SELECT u.id, u.username, u.name FROM users u
+     WHERE lower(u.email)=$1 AND u.discoverable AND u.email_verified AND u.id<>$2
+       AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id=$2 AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=$2))`,
+    [email, req.user.id]);
+  if (!rows[0]) return res.status(404).json({ error: '찾을 수 없습니다. 상대가 이메일로 찾기를 허용했는지 확인해 보세요' });
+  res.json({ username: rows[0].username, name: rows[0].name });
+}));
+
 // requester → me 요청을 수락: 양쪽 모두 accepted 로 만든다
 async function acceptFriend(requesterId, myId) {
   await pool.query(
